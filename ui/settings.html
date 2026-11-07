@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title data-i18n="set.title">Soroka</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e3de; --accent: #5b5fc7; --ok: #107c10; --warn: #c4314b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3a3a38; --accent: #8f95ff; --ok: #6ccb5f; --warn: #ff8a9e; } }
+  body { margin: 0; overflow-y: auto; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  main { padding: 14px 18px 12px; }
+  .welcome { border-left: 3px solid var(--accent); padding: 2px 10px; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  /* four columns balanced by height; on a narrow screen they wrap to two rows and the window scrolls */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; align-items: start; }
+  .block { break-inside: avoid; padding-bottom: 14px; }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px 2px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 38px; }
+  .row + .row, .row + .note + .row { border-top: 1px solid var(--line); }
+  .name { width: 92px; flex: none; color: var(--muted); }
+  #teamsState, #claudeState, #diagState { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a narrow column cuts the version, not the dot from its word */
+  .grow { flex: 1; min-width: 0; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  .note { color: var(--muted); font-size: 12px; padding: 0 0 8px 102px; margin-top: -6px; }
+  .note.full { padding-left: 0; margin-top: 0; }
+  #modelsNote { padding: 6px 0; }
+  textarea.tones { height: 52px; margin-top: 0; }
+  .note:empty { display: none; }
+  select, button, textarea { font: inherit; color: var(--fg); }
+  select, input:not([type="checkbox"]) { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); min-width: 0; } /* a long option shrinks, never spills past the card */
+  input { font: inherit; color: var(--fg); }
+  button { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; cursor: pointer; white-space: nowrap; }
+  button:disabled { opacity: .5; cursor: default; }
+  .link { border: 0; padding: 0; color: var(--accent); background: none; }
+  textarea { width: 100%; box-sizing: border-box; height: 84px; resize: none; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); margin: 10px 0 4px; }
+  .between { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 8px; font-size: 12px; color: var(--muted); }
+  label.row { cursor: pointer; }
+  kbd { font: 12px "Segoe UI", system-ui; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; padding: 0 2px; }
+  [hidden] { display: none !important; }
+  .note.top { padding-top: 8px; }
+  .spin { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="welcome" id="welcome" data-i18n="set.welcome" hidden></div>
+  <div class="grid">
+    <div class="col">
+      <div class="block">
+        <h2 data-i18n="set.connections"></h2>
+        <section>
+          <div class="row"><span class="name">Teams</span><span class="grow" id="teamsState"><span class="dot"></span>…</span><button id="teamsShow" data-i18n="set.open"></button></div>
+          <div class="row"><span class="name" data-i18n="set.diag"></span><span class="grow" id="diagState"><span class="dot"></span>…</span><button id="diagCheck" data-i18n="set.check"></button></div>
+          <div class="note" id="diagNote"></div>
+          <div class="row"><span class="name">Claude Code</span><span class="grow" id="claudeState"><span class="dot"></span>…</span>
+            <button id="claudeInstall" data-i18n="set.claudeInstall" hidden></button><button id="claudeLogin" data-i18n="act.signIn" hidden></button><button id="claudeCheck" data-i18n="set.check"></button></div>
+          <div class="note" id="claudeNote"></div>
+          <div class="row" data-claude><span class="name" data-i18n="set.models"></span><span class="grow" id="modelsNote"></span><button id="modelsCheck" data-i18n="set.modelsCheck"></button></div>
+          <div class="note" data-claude data-i18n="set.modelsNote"></div>
+        </section>
+      </div>
+
+      <div class="block">
+        <h2 data-i18n="set.inTeams"></h2>
+        <section>
+          <div class="row"><span class="grow" data-i18n="set.keySummary"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></div>
+          <div class="row" data-claude><span class="grow" data-i18n="set.keyReply"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
+          <div class="row" data-claude><span class="grow" data-i18n="set.keyImprove"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></div>
+          <div class="note full" data-i18n="set.keysNote"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="block">
+        <h2 data-i18n="set.newMessages"></h2>
+        <section>
+          <div class="note full top" data-i18n="set.notifyNote"></div>
+          <div class="row"><span class="name" data-i18n="set.onlyFrom"></span><input class="grow" name="onlyFrom" maxlength="1000" data-i18n-placeholder="set.onlyFromPh"></div>
+          <div class="row"><span class="name" data-i18n="set.keywords"></span><input class="grow" name="keywords" maxlength="1000" data-i18n-placeholder="set.keywordsPh"></div>
+          <div class="row"><span class="name" data-i18n="set.quiet"></span><input type="time" name="quietFrom"> – <input type="time" name="quietTo"></div>
+          <div class="note" data-i18n="set.quietNote"></div>
+          <label class="row"><input type="checkbox" name="quietDnd"> <span data-i18n="set.quietDnd"></span></label>
+          <label class="row"><input type="checkbox" name="activity"> <span data-i18n="set.activity"></span></label>
+          <div class="row"><span class="name" data-i18n="set.muteFrom"></span><input class="grow" name="muteFrom" maxlength="1000" data-i18n-placeholder="set.muteFromPh"></div>
+          <div class="row"><span class="name" data-i18n="set.remind"></span>
+            <select name="remindAfter"><option value="" data-i18n="set.remindNever"></option><option value="60" data-i18n="set.remind60"></option>
+              <option value="240" data-i18n="set.remind240"></option><option value="1440" data-i18n="set.remind1440"></option></select></div>
+          <div class="note" data-i18n="set.remindNote"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="block">
+        <h2 data-i18n="set.app"></h2>
+        <section>
+          <div class="row"><span class="name" data-i18n="set.language"></span>
+            <select name="language"><option value="uk">Українська</option><option value="en">English</option><option value="ru">Русский</option></select></div>
+          <div class="row"><span class="name" data-i18n="set.theme"></span>
+            <select name="theme"><option value="" data-i18n="set.themeSystem"></option><option value="light" data-i18n="set.themeLight"></option><option value="dark" data-i18n="set.themeDark"></option></select></div>
+          <div class="note" data-i18n="set.themeNote"></div>
+          <label class="row"><input type="checkbox" name="autostart"> <span data-i18n="set.autostart"></span></label>
+          <div class="row"><span class="name" data-i18n="set.notify"></span><span class="grow"></span><button id="notifyTest" data-i18n="set.notifyTest"></button></div>
+          <div class="row"><span class="name" data-i18n="set.jira"></span><input class="grow" name="jiraUrl" data-i18n-placeholder="set.jiraPh"></div>
+        </section>
+      </div>
+
+      <div class="block" data-claude>
+        <h2 data-i18n="set.claudeMessages"></h2>
+        <section>
+          <div class="row"><span class="name" data-i18n="set.action"></span>
+            <select class="grow" name="wakeMode">
+              <option value="notify" data-i18n="set.wake.notify"></option>
+              <option value="drafts" data-i18n="set.wake.drafts"></option>
+              <option value="monitor" data-i18n="set.wake.monitor"></option>
+            </select></div>
+          <div class="note" id="modeNote"></div>
+          <div class="row"><span class="name" data-i18n="set.model"></span>
+            <select name="draftModel"></select></div>
+          <div class="row"><span class="name" data-i18n="set.aiSkip"></span><input class="grow" name="aiSkip" maxlength="1000" data-i18n-placeholder="set.aiSkipPh"></div>
+          <div class="note" data-i18n="set.aiSkipNote"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="block" data-claude>
+        <h2 data-i18n="set.summary"></h2>
+        <section>
+          <div class="row"><span class="name" data-i18n="set.model"></span>
+            <select name="summaryModel"></select></div>
+          <div class="row"><span class="name" data-i18n="set.digest"></span><input type="time" name="digestAt"></div>
+          <div class="note" data-i18n="set.digestNote"></div>
+          <label class="row"><input type="checkbox" name="summaryBackground"> <span data-i18n="set.summaryBackground"></span></label>
+        </section>
+      </div>
+
+      <div class="block" data-claude>
+        <h2 data-i18n="set.onBehalf"></h2>
+        <section>
+          <textarea id="style" maxlength="3000" data-i18n-placeholder="set.stylePlaceholder"></textarea>
+          <div class="between"><span id="styleNote" data-i18n="set.styleNote"></span><button class="link" id="styleLearn" data-i18n="set.styleLearn"></button></div>
+          <textarea name="tones" class="tones" maxlength="3000" data-i18n-placeholder="set.tonesPh"></textarea>
+          <div class="between"><span data-i18n="set.tonesNote"></span></div>
+          <label class="row"><input type="checkbox" name="label"> <span data-i18n="set.label"></span></label>
+        </section>
+      </div>
+    </div>
+  </div>
+  <footer><span><span id="about">Soroka · created by Pavlo Dykalo</span> · <button class="link" id="diagCopy" data-i18n="set.diagCopy"></button></span><span id="status" data-i18n="set.footer"></span></footer>
+</main>
+<script src="i18n.js"></script>
+<script type="module">
+  await i18n;
+  const $ = id => document.getElementById(id);
+  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const spin = () => Object.assign(document.createElement('span'), { className: 'spin' }); // Claude takes a while: show it is working
+  $('welcome').hidden = !new URLSearchParams(location.search).has('welcome');
+  let current = {}, models = {};
+  const show = s => {
+    current = s;
+    document.querySelectorAll('[name]').forEach(el => (el.type === 'checkbox' ? (el.checked = s[el.name]) : (el.value = String(s[el.name]))));
+    $('modeNote').textContent = t(`set.note.${s.wakeMode}`);
+    if (document.activeElement !== $('style')) $('style').value = s.style;
+    showModels(); // the model lists hold only what Claude Code reported: pick the chosen ones there
+  };
+  const save = async patch => {
+    try { show(await bridge.invoke('settings:set', patch)); $('status').textContent = t('set.saved'); }
+    catch (e) { $('status').textContent = t('set.error', { text: errorText(e) }); bridge.invoke('settings:get').then(show); }
+  };
+  bridge.invoke('settings:get').then(show);
+  // the window follows the content: no scrollbar when a status note appears
+  let fitting;
+  new ResizeObserver(() => { clearTimeout(fitting); fitting = setTimeout(() => bridge.invoke('window:fit', document.querySelector('main').offsetHeight), 30); }).observe(document.querySelector('main'));
+  document.addEventListener('change', ({ target: el }) => {
+    if (el.name) save({ [el.name]: el.type === 'checkbox' ? el.checked : el.value.trim() });
+  });
+  // Both model lists come from Claude Code ("Refresh"); a model the plan does not include stays, greyed out with the reason
+  const name = id => { const [, family, ...version] = id.split('-'); return family ? `${family[0].toUpperCase()}${family.slice(1)} ${version.join('.')}`.trim() : id; };
+  const traits = { opus: t('set.fam.opus'), sonnet: t('set.fam.sonnet'), haiku: t('set.fam.haiku') };
+  function showModels(found = models) {
+    models = found;
+    for (const select of document.querySelectorAll('select[name$="Model"]')) {
+      const ids = Object.keys(models).includes(current[select.name]) || !current[select.name] ? Object.keys(models) : [...Object.keys(models), current[select.name]];
+      select.replaceChildren(...ids.map(id => {
+        const o = document.createElement('option'), bad = !!models[id] && models[id] !== 'ok', trait = traits[id.split('-')[1]];
+        o.value = id; o.disabled = bad; o.title = bad ? models[id] : '';
+        o.textContent = name(id) + (bad ? ` — ${t('set.modelOff')}` : trait ? ` — ${trait}` : '');
+        return o;
+      }));
+      select.value = current[select.name] ?? '';
+    }
+    $('modelsNote').textContent = Object.entries(models).map(([id, r]) => name(id) + (r === 'ok' ? ' ✓' : r ? ' ✗' : '')).join(' · ');
+  }
+  bridge.invoke('models:get').then(showModels);
+  $('modelsCheck').onclick = async () => {
+    $('modelsCheck').disabled = true; $('modelsNote').replaceChildren(spin(), t('set.modelsChecking'));
+    try { const found = await bridge.invoke('models:check'); show(await bridge.invoke('settings:get')); showModels(found); } // a chosen model may have moved to its family's newer version
+    catch (e) { $('modelsNote').textContent = errorText(e); }
+    finally { $('modelsCheck').disabled = false; }
+  };
+  $('style').onblur = () => save({ style: $('style').value.trim() });
+
+  function state(el, text, tone) { const d = document.createElement('span'); d.className = 'dot ' + tone; el.replaceChildren(d, text); el.title = text; }
+  function showStatus({ teams, claude, version, spent, check }) {
+    $('about').textContent = `Soroka ${version} · created by Pavlo Dykalo`;
+    const broken = Object.keys(check).filter(k => check[k] === false), checked = Object.keys(check).length > 0;
+    const lost = broken.map(k => t(`diag.${k}`)).join(', ');
+    state($('diagState'), !checked ? t('set.diagWait') : broken.length ? t('set.diagBroken', { list: lost }) : t('set.diagOk'), !checked ? '' : broken.length ? 'warn' : 'ok');
+    $('diagNote').textContent = broken.length ? t('set.diagNote', { list: lost }) : '';
+    $('claudeInstall').hidden = !!claude.path;
+    document.querySelectorAll('[data-claude]').forEach(el => (el.hidden = !claude.loggedIn)); // without Claude Code only the notifications remain
+    const s = { ready: ['set.teamsReady', 'ok'], login: ['set.teamsLogin', 'warn'], starting: ['set.teamsStarting', ''] }[teams];
+    state($('teamsState'), t(s[0]), s[1]);
+    $('claudeLogin').hidden = !claude.path || !!claude.loggedIn || !!claude.error;
+    const until = claude.expiresAt ? t('set.claudeUntil', { date: new Date(claude.expiresAt).toLocaleDateString(locale) }) : '';
+    const plan = claude.plan ? claude.plan[0].toUpperCase() + claude.plan.slice(1) : '';
+    const c = !claude.path ? [t('set.claudeMissing'), 'warn', t('set.claudeMissingNote')]
+      : claude.error ? [t('set.claudeError'), 'warn', claude.error]
+      : !claude.loggedIn ? [t('set.claudeLoggedOut'), 'warn', t('set.claudeLoggedOutNote')]
+      : claude.authMethod && claude.authMethod !== 'claude.ai' ? [t('set.claudeApi'), 'warn', t('set.claudeApiNote')]
+      : [t('set.claudeReady', { version: claude.version }), 'ok', t('set.claudePlan', { plan }).replace('  ', ' ') + until];
+    state($('claudeState'), c[0], c[1]);
+    $('claudeNote').textContent = c[2] + (claude.loggedIn && spent ? ` ${t('set.spent', { n: Math.max(1, Math.round(spent / 1000)) })}` : '');
+  }
+  const refresh = () => bridge.invoke('status:get').then(showStatus);
+  refresh(); setInterval(refresh, 3000);
+  $('teamsShow').onclick = () => bridge.invoke('teams:show');
+  $('claudeLogin').onclick = () => bridge.invoke('claude:login');
+  $('claudeInstall').onclick = () => bridge.invoke('claude:install');
+  $('diagCheck').onclick = async () => { state($('diagState'), t('set.checking'), ''); await bridge.invoke('teams:check'); refresh(); };
+  $('diagCopy').onclick = async () => { await bridge.invoke('report:copy'); $('status').textContent = t('set.diagCopied'); };
+  $('notifyTest').onclick = () => bridge.invoke('notify:test');
+  $('claudeCheck').onclick = async () => { state($('claudeState'), t('set.checking'), ''); await bridge.invoke('claude:check'); refresh(); };
+  $('styleLearn').onclick = async () => {
+    $('styleLearn').disabled = true; $('styleNote').replaceChildren(spin(), t('set.styleReading'));
+    try { $('style').value = await bridge.invoke('style:learn'); await save({ style: $('style').value.trim() }); $('styleNote').textContent = t('set.styleDone'); }
+    catch (e) { $('styleNote').textContent = errorText(e); }
+    finally { $('styleLearn').disabled = false; }
+  };
+</script>
+</body>
+</html>

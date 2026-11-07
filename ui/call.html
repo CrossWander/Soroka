@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Soroka</title>
+<style>
+  /* Teams' ringing toast, mirrored in the look of the app's own cards (toast.html): who calls and Teams' own buttons.
+     It slides down in the top right corner and stays while Teams rings. */
+  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --error: #c4314b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); }
+  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --error: #ff8a9e; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); } }
+  html, body { margin: 0; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); user-select: none; }
+  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 40px 1fr auto; gap: 0 12px; align-items: start;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.28);
+    opacity: 0; transform: translateY(-110%); transition: opacity .38s cubic-bezier(.215,.61,.355,1), transform .38s cubic-bezier(.215,.61,.355,1); }
+  .card.shown { opacity: 1; transform: none; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 15px;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .live .avatar { animation: halo 1.6s ease-out infinite; } /* ringing: a soft pulse, like Teams' own */
+  @keyframes halo { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .live .avatar { animation: none; } }
+  .kind { color: var(--muted); font-size: 12px; }
+  .title { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message:empty { display: none; }
+  .actions { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .actions button { font: inherit; font-size: 13px; padding: 4px 10px; border: 0; border-radius: 6px; background: var(--btn); color: var(--fg); cursor: pointer; }
+  .actions button:first-child { background: var(--accent); color: #fff; }
+  .actions button:hover { background: var(--btn-hover); } .actions button:first-child:hover { filter: brightness(1.1); background: var(--accent); }
+  .actions button.no { color: var(--error); }
+  .actions button:disabled { opacity: .6; cursor: default; }
+  .close { border: 0; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; cursor: pointer; }
+  .close:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="avatar" id="avatar"></div>
+    <div><div class="kind" id="kind"></div><div class="title" id="title"></div><div class="message" id="message"></div></div>
+    <button class="close" id="close" data-i18n-title="call.hide">✕</button>
+    <div class="actions" id="actions"></div>
+  </div>
+<script src="i18n.js"></script>
+<script type="module">
+  // Texts and button labels come from Teams: textContent only.
+  await i18n;
+  const $ = id => document.getElementById(id);
+  $('close').onclick = () => bridge.invoke('ring:dismiss');
+  const initials = name => name.split(/\s+/).filter(w => /^\p{L}/u.test(w)).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '📞';
+  bridge.on('ring', async r => {
+    if (!r) return;
+    const call = r.kind === 'call';
+    $('card').classList.toggle('live', r.live);
+    $('avatar').textContent = call ? initials(r.title) : '📅';
+    $('kind').textContent = `${call ? '📞 ' : ''}${t(call ? 'call.incoming' : r.live ? 'call.meeting' : 'call.meetingGone')}`;
+    $('title').textContent = $('title').title = r.title || t(call ? 'call.incoming' : 'call.meeting');
+    $('message').textContent = r.message;
+    // accept / join first (the accent button), decline last; once Teams' own meeting toast is gone only "Join" is left
+    const buttons = r.buttons.map((b, i) => ({ ...b, i })).filter(b => r.live || !b.reject).sort((a, b) => a.reject - b.reject);
+    $('actions').replaceChildren(...buttons.map(b => {
+      const e = document.createElement('button');
+      e.textContent = b.label || t(b.reject ? 'call.decline' : call ? 'call.accept' : 'call.join');
+      if (b.reject) e.className = 'no';
+      e.onclick = () => { [...$('actions').children].forEach(x => (x.disabled = true)); bridge.invoke('ring:click', b.i).catch(() => bridge.invoke('ring:dismiss')); };
+      return e;
+    }));
+    await bridge.invoke('ring:size', $('card').offsetHeight + 32); // + margins left for the shadow
+    requestAnimationFrame(() => $('card').classList.add('shown'));
+  });
+</script>
+</body>
+</html>

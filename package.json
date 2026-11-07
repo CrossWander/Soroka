@@ -1,0 +1,55 @@
+{
+  "name": "soroka",
+  "productName": "Soroka",
+  "version": "0.9.6",
+  "description": "Soroka: Teams notifications, calls, replies and summaries with Claude Code; sends only what you approve",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsc && electron .",
+    "dist": "tsc && npm run icon && electron-builder --win nsis",
+    "icon": "node -e \"const fs = require('fs'), i = require('./dist/icon'); fs.writeFileSync('build/icon.png', i.png(256)); fs.writeFileSync('build/icon.ico', i.ico())\""
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "typescript": "7.0.2"
+  },
+  "build": {
+    "appId": "local.soroka",
+    "productName": "Soroka",
+    "icon": "build/icon.png",
+    "files": [
+      "dist/**",
+      "ui/**",
+      "package.json",
+      "LICENSE",
+      "NOTICE"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeCliInspectArguments": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "Soroka",
+      "runAfterFinish": true
+    },
+    "copyright": "© 2026 Pavlo Dykalo"
+  },
+  "author": "Pavlo Dykalo",
+  "license": "Apache-2.0"
+}

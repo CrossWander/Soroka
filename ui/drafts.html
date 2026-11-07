@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title data-i18n="drafts.title">Soroka</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --chip: #ececf8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; --chip: #34344a; } }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; border: 1px solid var(--line); box-sizing: border-box; }
+  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 4px 14px; -webkit-app-region: drag; font-weight: 600; }
+  .bar button { -webkit-app-region: no-drag; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 14px 8px; }
+  #list { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
+  article { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .note { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .note a { font-weight: 400; font-size: 12px; color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .links { display: flex; gap: 10px; align-items: baseline; }
+  select.later { font: 12px "Segoe UI", system-ui, sans-serif; color: var(--accent); background: transparent; border: 0; padding: 0; cursor: pointer; }
+  select.later option { color: var(--fg); background: var(--card); }
+  .jira { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  .jira:empty { display: none; }
+  .jira button { font-size: 12px; padding: 1px 8px; }
+  blockquote { margin: 6px 0; padding-left: 8px; border-left: 3px solid var(--line); color: var(--muted); max-height: 5.6em; overflow: hidden; }
+  .variants { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+  .variants button { text-align: left; background: var(--chip); border: 1px solid transparent; border-radius: 6px; padding: 5px 8px; font: inherit; color: var(--fg); cursor: pointer; }
+  .variants button.on { border-color: var(--accent); }
+  .busy { color: var(--muted); font-size: 13px; margin: 6px 0; display: flex; align-items: center; gap: 8px; }
+  [hidden] { display: none !important; }
+  .spin { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  textarea { width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .err { color: var(--error); font-size: 12px; }
+  .err:not(:empty) { margin-top: 4px; }
+  footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  footer .react { padding: 5px 8px; }
+  footer .reject { margin-left: auto; }
+  .quote { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+  button.send { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.close { border: 0; font-size: 18px; line-height: 1; padding: 2px 8px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="bar"><span data-i18n="drafts.head"></span> <button class="close" data-i18n-title="drafts.hide">×</button></div>
+  <p class="hint" data-i18n="drafts.hint"></p>
+  <div id="list"></div>
+<script src="i18n.js"></script>
+<script type="module">
+  // Message texts come from Teams and Claude: only textContent / value, never innerHTML.
+  await i18n;
+  const { jiraUrl } = await bridge.invoke('settings:get');
+  const list = document.getElementById('list');
+  const cards = new Map();
+  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  document.querySelector('.close').onclick = () => bridge.invoke('drafts:hide');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+
+  function card(d) {
+    const box = el('article');
+    const open = el('a', '', t('act.openChat'));
+    open.onclick = () => bridge.invoke('draft:open', d.n);
+    // without Claude Code: the request with the transcript goes to the clipboard and claude.ai opens
+    const handoff = el('a', '', t('summary.handoff')); handoff.title = t('summary.handoffTip');
+    handoff.onclick = () => bridge.invoke('draft:handoff', d.n).then(() => (err.textContent = t('summary.handoffDone')), e => (err.textContent = errorText(e)));
+    // "Remind me later": the card leaves the window and comes back as a notification at that time
+    const later = el('select', 'later');
+    later.append(...[['', t('drafts.later')], ['30', t('drafts.later30')], ['60', t('drafts.later60')], ['180', t('drafts.later180')], ['-1', t('drafts.laterTomorrow')]]
+      .map(([v, label]) => Object.assign(el('option', '', label), { value: v })));
+    later.onchange = () => later.value && bridge.invoke('draft:snooze', d.n, Number(later.value));
+    later.hidden = !!d.improve; // "Improve my text" answers no one: nothing to be reminded of
+    const links = el('span', 'links'); links.append(later, handoff, open);
+    const note = el('div', 'note'); note.append(el('span', '', d.note), links);
+    box.append(note);
+    const said = el('blockquote');
+    const jira = el('div', 'jira'); // issue keys in the message or the replies open in Jira
+    const variants = el('div', 'variants');
+    const busy = el('div', 'busy'); busy.append(el('span', 'spin'), t('drafts.busy')); // Claude takes a few seconds: show it is working
+    const area = el('textarea'); area.placeholder = t('drafts.placeholder');
+    const err = el('div', 'err');
+    const suggest = el('button', 'suggest', t('drafts.suggest'));
+    const react = el('button', 'react', '😊'); react.title = t('drafts.reactTip'); // Teams' reactions, on the other side's latest message
+    react.onclick = () => bridge.invoke('react:open', d.n);
+    const quote = el('input'); quote.type = 'checkbox'; // "Reply with quote" to the other side's latest message
+    const quoteRow = el('label', 'quote'); quoteRow.append(quote, t('drafts.quote'));
+    react.hidden = quoteRow.hidden = !!d.improve; // "Improve my text" answers no one
+    const reject = el('button', 'reject', t('drafts.reject'));
+    const send = el('button', 'send', t('drafts.send'));
+    const act = async fn => {
+      send.disabled = reject.disabled = true;
+      try { await fn(); } catch (e) { err.textContent = errorText(e); send.disabled = reject.disabled = false; }
+    };
+    suggest.onclick = () => bridge.invoke('draft:suggest', d.n);
+    send.onclick = () => act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked));
+    reject.onclick = () => act(() => bridge.invoke('draft:reject', d.n));
+    area.onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) send.click(); };
+    const foot = el('footer'); foot.append(suggest, react, reject, send);
+    box.append(said, jira, variants, busy, area, quoteRow, err, foot);
+    box.update = (d, claude) => {
+      said.textContent = d.last || ''; said.hidden = !d.last; // a newer message in the chat replaces it
+      const keys = jiraUrl ? [...new Set([d.last, ...(d.variants || [])].join(' ').match(/\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g) || [])] : [];
+      jira.replaceChildren(...keys.map(k => { const b = el('button', '', `${k} ↗`); b.onclick = () => bridge.invoke('open:jira', k); return b; }));
+      busy.hidden = !d.busy;
+      suggest.disabled = !!d.busy || !claude; // without Claude Code: «Open in Claude» above still works
+      suggest.title = claude ? '' : t('claude.needed');
+      suggest.textContent = d.variants?.length ? t('drafts.more') : t('drafts.suggest');
+      err.textContent = d.error || '';
+      if (!area.value && d.text) area.value = d.text; // never overwrite what the user is typing
+      variants.replaceChildren(...(d.variants || []).map(v => {
+        const b = el('button', area.value === v ? 'on' : '', v);
+        b.onclick = () => { area.value = v; [...variants.children].forEach(x => x.classList.toggle('on', x === b)); area.focus(); };
+        return b;
+      }));
+    };
+    return box;
+  }
+  async function render() {
+    const [drafts, { claude }] = await Promise.all([bridge.invoke('drafts:get'), bridge.invoke('status:get')]);
+    const ids = new Set(drafts.map(d => d.n));
+    for (const [n, box] of cards) if (!ids.has(n)) { box.remove(); cards.delete(n); }
+    for (const d of drafts) {
+      if (!cards.has(d.n)) { const box = card(d); cards.set(d.n, box); list.append(box); }
+      cards.get(d.n).update(d, !!claude.loggedIn);
+    }
+  }
+  bridge.on('drafts', render);
+  render();
+</script>
+</body>
+</html>

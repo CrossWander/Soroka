@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Soroka</title>
+<style>
+  :root { color-scheme: light dark; --bg: #ebebeb; --fg: #242424; --muted: #616161; --hover: rgba(0, 0, 0, .07); --line: #d1d1d1; --main: #4f52b2; --dot: #5b5fc7; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1f; --fg: #fff; --muted: #adadad; --hover: #3a3a3a; --line: #3d3d3d; --main: #a9adff; --dot: #8f95ff; } }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+  body { height: 28px; display: flex; align-items: center; padding: 0 4px 0 8px; color: var(--fg); font: 12.5px "Segoe UI", system-ui, sans-serif; user-select: none; }
+  button { font: inherit; color: inherit; background: none; border: 0; height: 22px; padding: 0 9px; border-radius: 4px; display: flex; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .45; cursor: default; }
+  #suggest { color: var(--main); font-weight: 600; }
+  .sep { width: 1px; height: 14px; background: var(--line); margin: 0 4px; flex: none; }
+  #chat { color: var(--muted); padding-right: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30%; }
+  #chat b { color: var(--fg); font-weight: 600; }
+  .badge { background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; font-weight: 600; line-height: 14px; padding: 0 5px; }
+  .grow { flex: 1; }
+  #status { color: var(--muted); font-size: 12px; margin-right: 6px; padding-left: 4px; display: flex; /* padding: room for the dot's halo */ align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; min-width: 0; }
+  #status.busy::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--dot) 25%, transparent); border-top-color: var(--dot); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #status.busy::before { animation-duration: 3s; } }
+</style>
+</head>
+<body>
+  <span id="chat" hidden><span data-i18n="strip.chat"></span> <b></b></span>
+  <span class="sep" id="chatSep" hidden></span>
+  <button id="suggest" data-act="suggest" data-i18n="strip.suggest" data-i18n-title="strip.suggestTip"></button>
+  <button id="improve" data-act="improve" data-i18n="strip.improve" data-i18n-title="strip.improveTip"></button>
+  <button id="summary" data-act="summary" data-i18n="strip.summary" data-i18n-title="strip.summaryTip"></button>
+  <span class="sep"></span>
+  <button id="drafts" data-act="drafts" data-i18n-title="strip.draftsTip"></button>
+  <button data-act="refresh" data-i18n="strip.refresh" data-i18n-title="strip.refreshTip"></button>
+  <span class="grow"></span>
+  <span id="status"></span>
+  <button data-act="settings" data-i18n-title="strip.settingsTip">⚙</button>
+<script src="i18n.js"></script>
+<script type="module">
+  await i18n;
+  const $ = id => document.getElementById(id);
+  document.querySelectorAll('[data-act]').forEach(b => (b.onclick = () => bridge.invoke('strip:act', b.dataset.act)));
+  function show(s) {
+    $('chat').hidden = $('chatSep').hidden = !s.chat;
+    $('chat').querySelector('b').textContent = $('chat').title = s.chat;
+    $('summary').disabled = !s.ready; // without Claude Code the summary window still offers «Open in Claude»
+    $('suggest').disabled = !s.ready || !s.claude;
+    $('suggest').title = t(s.claude ? 'strip.suggestTip' : 'claude.needed');
+    $('improve').disabled = $('suggest').disabled;
+    $('improve').title = t(s.claude ? 'strip.improveTip' : 'claude.needed');
+    $('drafts').disabled = !s.pending;
+    const badge = document.createElement('span');
+    badge.className = 'badge'; badge.textContent = s.pending;
+    $('drafts').replaceChildren(t('strip.drafts'), ...(s.pending ? [badge] : []));
+    $('status').textContent = $('status').title = s.busy || s.note;
+    $('status').className = s.busy ? 'busy' : '';
+  }
+  bridge.on('strip', show);
+  show(await bridge.invoke('strip:get'));
+</script>
+</body>
+</html>

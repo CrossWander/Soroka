@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title data-i18n="summary.title">Soroka</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; height: 100vh; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, button, input { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  #chat, #question { flex: 1; min-width: 220px; }
+  #pick { margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); max-height: 168px; overflow-y: auto; }
+  #pick label { display: flex; gap: 8px; align-items: center; padding: 1px 0; }
+  #pick p { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+  button.go { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
+  /* both labels take the same cell: the button keeps its width when "Summarize" turns into "Stop" */
+  #go { display: inline-grid; } #go > span { grid-area: 1 / 1; }
+  #go > span + span, #go.running > span:first-child { visibility: hidden; } #go.running > span + span { visibility: visible; }
+  button:disabled { opacity: .5; }
+  .statusline { display: flex; align-items: center; gap: 8px; min-height: 1.4em; color: var(--muted); }
+  #status.error { color: var(--error); }
+  [hidden] { display: none !important; }
+  .spin { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  #out { flex: 1; overflow-y: auto; white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  #out:empty { display: none; }
+  .chip { font-size: 12px; padding: 2px 8px; cursor: pointer; }
+  #jira:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="row">
+    <select id="chat"><option data-i18n="summary.loading"></option></select>
+    <select id="period" data-i18n-title="summary.period">
+      <option value="d0" data-i18n="summary.d0"></option><option value="d1" data-i18n="summary.d1"></option><option value="d7" data-i18n="summary.d7" selected></option>
+      <option value="d30" data-i18n="summary.d30"></option><option value="n100" data-i18n="summary.n100"></option><option value="me" data-i18n="summary.me"></option>
+    </select>
+  </div>
+  <fieldset id="pick" hidden><p data-i18n="summary.pickHint"></p><div id="picklist"></div></fieldset>
+  <div class="row">
+    <button class="go" id="go"><span data-i18n="summary.go"></span><span data-i18n="summary.stop"></span></button>
+    <button id="handoff" data-i18n="summary.handoff" data-i18n-title="summary.handoffTip"></button>
+  </div>
+  <div class="row"><input id="question" maxlength="500" data-i18n-placeholder="summary.askPh"><button id="ask" data-i18n="summary.ask"></button></div>
+  <div class="statusline"><span class="spin" id="spin" hidden></span><span id="status" data-i18n="summary.hint"></span></div>
+  <div id="out"></div>
+  <div class="row" id="jira"></div>
+  <div class="row"><button id="copy" data-i18n="summary.copy" hidden></button></div>
+</main>
+<script src="i18n.js"></script>
+<script type="module">
+  // The summary is Claude's text about Teams messages: textContent only.
+  const $ = id => document.getElementById(id);
+  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let chats = [], preset = null, running = false;
+  bridge.on('summary:preset', p => { preset = p; apply(); }); // before any await: the preset comes right after load
+  await i18n;
+  try { $('period').value = localStorage.getItem('period') || 'd7'; } catch { /* storage unavailable: keep the default */ }
+  $('period').onchange = () => { try { localStorage.setItem('period', $('period').value); } catch { /* not remembered */ } };
+  const DIGEST = { id: '*', title: t('summary.digest') }; // every chat with a message today
+  const MISSED = { id: '!', title: t('summary.missed') }; // the unread chats, each since the user's last message
+  const SEVERAL = { id: '+', title: t('summary.several') }; // the chats ticked below
+  const { jiraUrl, summaryBackground } = await bridge.invoke('settings:get');
+  bridge.invoke('chats:list').then(list => {
+    chats = [DIGEST, MISSED, SEVERAL, ...list];
+    $('chat').replaceChildren(...chats.map(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.title; return o; }));
+    $('picklist').replaceChildren(...list.map(c => {
+      const box = Object.assign(document.createElement('input'), { type: 'checkbox', value: c.id });
+      box.onchange = () => { if (picked().length > 10) box.checked = false; }; // the app reads at most 10
+      const label = document.createElement('label'); label.append(box, c.title); return label;
+    }));
+    if (list.length) $('chat').value = list[0].id;
+    if (!apply()) showLast();
+  });
+  const picked = () => [...$('picklist').querySelectorAll('input:checked')].map(b => chats.find(c => c.id === b.value)).filter(Boolean).map(({ id, title }) => ({ id, title }));
+  // several chats at once: today's and the unread ones have their own period; the ticked ones show their list
+  const digestPicked = () => {
+    const v = $('chat').value;
+    $('period').disabled = running || v === '*' || v === '!';
+    $('pick').hidden = v !== '+'; $('pick').disabled = running;
+    $('ask').disabled = running || $('go').disabled;
+  };
+  $('chat').onchange = () => { digestPicked(); showLast(); };
+  // The last summary of the picked chat, kept by the app: one that finished while the window was out of sight is not lost
+  async function showLast() {
+    const c = chats.find(x => x.id === $('chat').value);
+    const r = c && c.id !== '+' && await bridge.invoke('summary:last', c.id);
+    if (running || c?.id !== $('chat').value) return; // a run started, or another chat was picked meanwhile
+    $('status').className = '';
+    if (!r) { $('out').textContent = ''; showJira(''); $('copy').hidden = true; $('status').textContent = t(c?.id === '!' ? 'summary.missedHint' : 'summary.hint'); return; }
+    show(r, c);
+    const at = new Date(r.at).toLocaleString(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    $('status').textContent = `${t('summary.lastAt', { time: at })} ${$('status').textContent}`;
+  }
+  // Opened for a chat: pick it; the user chooses the period and starts. With a result: one made already
+  // (the daily digest, or a summary that went on after its window was closed).
+  function apply() {
+    if (!preset || !chats.length) return false;
+    const p = preset; preset = null;
+    if (running) return true; // a run is on screen: the window only comes to the front
+    if (p.chatId) $('chat').value = p.chatId;
+    digestPicked();
+    if (p.result) show(p.result, chats.find(c => c.id === p.chatId) ?? DIGEST); else showLast();
+    return true;
+  }
+  // Issue keys in the summary open in Jira (only when its address is set)
+  function showJira(text) {
+    const keys = jiraUrl ? [...new Set(text.match(/\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g) || [])] : [];
+    $('jira').replaceChildren(...keys.map(k => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${k} ↗`; b.onclick = () => bridge.invoke('open:jira', k); return b; }));
+  }
+  function show(r, c, question) {
+    $('out').textContent = r.text;
+    showJira(r.text);
+    $('status').textContent = question ? t('summary.answer', { title: c.title })
+      : c.id === '*' ? t('summary.digestDone', { n: r.count || '' }).replace(/:\s*$/, '')
+      : c.id.length === 1 ? (r.count ? t('summary.chatsDone', { title: c.title.replace(/^★\s*|…$/g, ''), n: r.count }) : '')
+      : r.count ? t('summary.done', { title: c.title, count: plural(r.count), from: r.from }) : `«${c.title}»`;
+    $('copy').hidden = !r.text;
+  }
+  // The picked chat, or the ticked ones under "Several chats" (their names make the title of the toast and the status line)
+  function target() {
+    const c = chats.find(x => x.id === $('chat').value);
+    if (c?.id !== '+') return c && { ...c, ask: {} };
+    const list = picked();
+    if (!list.length) { $('status').className = 'error'; $('status').textContent = t('summary.pickNone'); return; }
+    return { ...c, title: list.map(x => x.title).join(', ').slice(0, 80), ask: { chats: list } };
+  }
+  async function run(question) {
+    const c = target();
+    if (!c) return;
+    $('spin').hidden = false; running = true; $('go').classList.add('running'); $('chat').disabled = true; digestPicked(); $('copy').hidden = true; $('out').textContent = ''; showJira('');
+    $('status').className = '';
+    $('status').textContent = t(question ? 'summary.asking' : 'summary.running', { title: c.title }) + (summaryBackground ? ` ${t('summary.canClose')}` : '');
+    try { show(await bridge.invoke('summary:run', c.id, c.title, $('period').value, { ...c.ask, question }), c, question); }
+    catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
+    finally { running = false; $('spin').hidden = true; $('go').classList.remove('running'); $('chat').disabled = false; digestPicked(); checkClaude(); }
+  }
+  // Without Claude Code only «Open in Claude» (claude.ai) is left
+  async function checkClaude() {
+    const { claude } = await bridge.invoke('status:get');
+    if (running) return;
+    $('go').disabled = $('ask').disabled = !claude.loggedIn;
+    $('go').title = $('ask').title = claude.loggedIn ? '' : t('claude.needed');
+  }
+  checkClaude();
+  window.addEventListener('focus', checkClaude);
+  $('go').onclick = () => (running ? bridge.invoke('summary:stop') : run());
+  // «Ask»: a question about the same chat and period instead of a summary
+  const ask = () => { const q = $('question').value.trim(); if (q && !running && !$('ask').disabled) run(q); };
+  $('ask').onclick = ask;
+  $('question').onkeydown = e => { if (e.key === 'Enter') ask(); };
+  // Without Claude Code: the same request (with the question, if one is typed) goes to the clipboard and claude.ai opens
+  $('handoff').onclick = async () => {
+    const c = target();
+    if (!c) return;
+    $('handoff').disabled = true; $('spin').hidden = false; $('status').className = ''; $('status').textContent = t('summary.reading', { title: c.title });
+    try { await bridge.invoke('summary:handoff', c.id, c.title, $('period').value, { ...c.ask, question: $('question').value.trim() || undefined }); $('status').textContent = t('summary.handoffDone'); }
+    catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
+    finally { $('handoff').disabled = false; $('spin').hidden = true; }
+  };
+  $('copy').onclick = async () => { await navigator.clipboard.writeText($('out').textContent); $('copy').textContent = t('summary.copied'); setTimeout(() => ($('copy').textContent = t('summary.copy')), 1500); };
+</script>
+</body>
+</html>
