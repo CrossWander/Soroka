@@ -5,7 +5,8 @@ import type { WebContents } from 'electron';
 export const TEAMS_URL = 'https://teams.cloud.microsoft/';
 // preview: the last message as the chat list shows it ("Author: text" in group chats, cut by Teams); time: "16:33" today, a date before
 export type Chat = { id: string; title: string; preview: string; time: string; type: string; unread: boolean; mention: boolean };
-export type Message = { id: string; author: string; mine: boolean; text: string };
+// replyTo, quote: a quoted reply's author and text, kept out of the message's own text
+export type Message = { id: string; author: string; mine: boolean; text: string; replyTo?: string; quote?: string };
 type ChatRef = Pick<Chat, 'id' | 'title'>;
 
 export const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
@@ -315,7 +316,13 @@ export const lastMessages = (n: number): Promise<Message[]> => run(n => {
     const mid = m.getAttribute('data-mid') || '';
     // the message element itself also holds reactions ("1 реакция"); content-<id> is the text alone
     const content = (document.getElementById(`content-${mid}`) ?? m) as HTMLElement;
-    return { id: mid, author, mine: m.className.includes('ChatMyMessage'), text: content.innerText.replace(/\s+/g, ' ').trim() };
+    // "Reply with quote" draws the quoted message as a card inside the content: its author and text are not this message's
+    const card = content.querySelector('[data-tid="quoted-reply-card"]') as HTMLElement | null;
+    const box = (card?.closest('[data-track-module-name="messageQuotedReply"]') ?? card) as HTMLElement | null;
+    const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const quote = card && { replyTo: flat((card.querySelector('[data-tid="quoted-reply-timestamp"]')?.previousElementSibling as HTMLElement | null)?.innerText ?? ''),
+      quote: flat((card.querySelector('[data-tid="quoted-reply-preview-content"]') as HTMLElement | null)?.innerText ?? '') };
+    return { id: mid, author, mine: m.className.includes('ChatMyMessage'), text: flat(box ? content.innerText.replace(box.innerText, '') : content.innerText), ...quote };
   }).filter(m => m.id).slice(-n);
 }, n);
 

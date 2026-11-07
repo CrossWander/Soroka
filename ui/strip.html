@@ -18,6 +18,7 @@
   #chat b { color: var(--fg); font-weight: 600; }
   .badge { background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; font-weight: 600; line-height: 14px; padding: 0 5px; }
   .grow { flex: 1; }
+  [hidden] { display: none !important; } /* buttons are flex boxes */
   #status { color: var(--muted); font-size: 12px; margin-right: 6px; padding-left: 4px; display: flex; /* padding: room for the dot's halo */ align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; min-width: 0; }
   #status.busy::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--dot) 25%, transparent); border-top-color: var(--dot); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -44,11 +45,12 @@
   function show(s) {
     $('chat').hidden = $('chatSep').hidden = !s.chat;
     $('chat').querySelector('b').textContent = $('chat').title = s.chat;
-    $('summary').disabled = !s.ready; // without Claude Code the summary window still offers «Open in Claude»
-    $('suggest').disabled = !s.ready || !s.claude;
-    $('suggest').title = t(s.claude ? 'strip.suggestTip' : 'claude.needed');
+    $('summary').disabled = !s.ready; // without AI the summary window makes the plain one
+    $('suggest').disabled = !s.ready || !s.ai;
+    $('suggest').title = t(s.ai ? 'strip.suggestTip' : 'ai.needed');
     $('improve').disabled = $('suggest').disabled;
-    $('improve').title = t(s.claude ? 'strip.improveTip' : 'claude.needed');
+    $('improve').title = t(s.ai ? 'strip.improveTip' : 'ai.needed');
+    $('suggest').hidden = $('improve').hidden = s.aiOff; // "Do not use AI": the summary stays, without AI
     $('drafts').disabled = !s.pending;
     const badge = document.createElement('span');
     badge.className = 'badge'; badge.textContent = s.pending;

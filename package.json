@@ -1,8 +1,8 @@
 {
   "name": "soroka",
   "productName": "Soroka",
-  "version": "0.9.6",
-  "description": "Soroka: Teams notifications, calls, replies and summaries with Claude Code; sends only what you approve",
+  "version": "0.10.0",
+  "description": "Soroka: Teams notifications, calls, replies and summaries with the AI of your own plan; sends only what you approve",
   "private": true,
   "main": "dist/main.js",
   "scripts": {

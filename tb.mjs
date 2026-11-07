@@ -1,5 +1,5 @@
 // CLI for the Soroka app's local API (for Claude sessions):
-//   node tb.mjs chats | unread | drafts | read "<chat>" [n] | summary "<chat>" [n] | send "<chat>" "<text>"
+//   node tb.mjs chats | unread | drafts | read "<chat>" [n] | summary "<chat>" [n] [plain] | send "<chat>" "<text>"
 //             | draft "<chat>" "<text>" [note] | notify "<title>" ["<message>"] | gifs "<query>" [n] | gif "<chat>" "<query>" [src] [text]
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,9 +32,9 @@ if (cmd === 'chats') {
 } else if (cmd === 'read' && a) {
   const r = await call(`/messages?chat=${encodeURIComponent(a)}&n=${Number(b ?? 20)}`);
   console.log(`# ${r.chat}`);
-  for (const m of r.messages) console.log(`${new Date(Number(m.id)).toLocaleString('uk-UA')} | ${m.mine ? 'Я' : m.author}: ${m.text}`);
+  for (const m of r.messages) console.log(`${new Date(Number(m.id)).toLocaleString('uk-UA')} | ${m.mine ? 'Я' : m.author}${m.replyTo ? ` (↩ ${m.replyTo}: «${m.quote}»)` : ''}: ${m.text}`);
 } else if (cmd === 'summary' && a) {
-  const r = await call(`/summary?chat=${encodeURIComponent(a)}&n=${Number(b ?? 100)}`);
+  const r = await call(`/summary?chat=${encodeURIComponent(a)}&n=${Number(b ?? 100)}${c === 'plain' ? '&plain' : ''}`); // plain: by rules, no AI
   console.log(`# ${r.chat}
 ${r.summary}`);
 } else if (cmd === 'send' && a && b) {
@@ -49,6 +49,6 @@ ${r.summary}`);
   const r = await post('/send-gif', { chat: a, query: b, src: c || undefined, text: process.argv[6] }); // text goes in the same message
   console.log(`sent "${r.gif}" to ${r.chat}`);
 } else {
-  console.error('usage: node tb.mjs chats | unread | drafts | read "<chat>" [n] | summary "<chat>" [n] | send "<chat>" "<text>" | draft "<chat>" "<text>" [note] | notify "<title>" ["<message>"] | gifs "<query>" [n] | gif "<chat>" "<query>" [src] [text]');
+  console.error('usage: node tb.mjs chats | unread | drafts | read "<chat>" [n] | summary "<chat>" [n] [plain] | send "<chat>" "<text>" | draft "<chat>" "<text>" [note] | notify "<title>" ["<message>"] | gifs "<query>" [n] | gif "<chat>" "<query>" [src] [text]');
   process.exit(2);
 }

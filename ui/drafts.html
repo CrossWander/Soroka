@@ -51,7 +51,7 @@
   <div id="list"></div>
 <script src="i18n.js"></script>
 <script type="module">
-  // Message texts come from Teams and Claude: only textContent / value, never innerHTML.
+  // Message texts come from Teams and the AI: only textContent / value, never innerHTML.
   await i18n;
   const { jiraUrl } = await bridge.invoke('settings:get');
   const list = document.getElementById('list');
@@ -64,7 +64,7 @@
     const box = el('article');
     const open = el('a', '', t('act.openChat'));
     open.onclick = () => bridge.invoke('draft:open', d.n);
-    // without Claude Code: the request with the transcript goes to the clipboard and claude.ai opens
+    // without an AI program: the request with the transcript goes to the clipboard and the AI chat site opens
     const handoff = el('a', '', t('summary.handoff')); handoff.title = t('summary.handoffTip');
     handoff.onclick = () => bridge.invoke('draft:handoff', d.n).then(() => (err.textContent = t('summary.handoffDone')), e => (err.textContent = errorText(e)));
     // "Remind me later": the card leaves the window and comes back as a notification at that time
@@ -79,7 +79,7 @@
     const said = el('blockquote');
     const jira = el('div', 'jira'); // issue keys in the message or the replies open in Jira
     const variants = el('div', 'variants');
-    const busy = el('div', 'busy'); busy.append(el('span', 'spin'), t('drafts.busy')); // Claude takes a few seconds: show it is working
+    const busy = el('div', 'busy'); busy.append(el('span', 'spin'), t('drafts.busy')); // the AI takes a few seconds: show it is working
     const area = el('textarea'); area.placeholder = t('drafts.placeholder');
     const err = el('div', 'err');
     const suggest = el('button', 'suggest', t('drafts.suggest'));
@@ -100,13 +100,14 @@
     area.onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) send.click(); };
     const foot = el('footer'); foot.append(suggest, react, reject, send);
     box.append(said, jira, variants, busy, area, quoteRow, err, foot);
-    box.update = (d, claude) => {
+    box.update = (d, ready, aiOff) => {
+      suggest.hidden = handoff.hidden = aiOff; // "Do not use AI": the card is for replying by hand
       said.textContent = d.last || ''; said.hidden = !d.last; // a newer message in the chat replaces it
       const keys = jiraUrl ? [...new Set([d.last, ...(d.variants || [])].join(' ').match(/\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g) || [])] : [];
       jira.replaceChildren(...keys.map(k => { const b = el('button', '', `${k} ↗`); b.onclick = () => bridge.invoke('open:jira', k); return b; }));
       busy.hidden = !d.busy;
-      suggest.disabled = !!d.busy || !claude; // without Claude Code: «Open in Claude» above still works
-      suggest.title = claude ? '' : t('claude.needed');
+      suggest.disabled = !!d.busy || !ready; // without AI: «Open in AI chat» above still works
+      suggest.title = ready ? '' : t('ai.needed');
       suggest.textContent = d.variants?.length ? t('drafts.more') : t('drafts.suggest');
       err.textContent = d.error || '';
       if (!area.value && d.text) area.value = d.text; // never overwrite what the user is typing
@@ -119,12 +120,12 @@
     return box;
   }
   async function render() {
-    const [drafts, { claude }] = await Promise.all([bridge.invoke('drafts:get'), bridge.invoke('status:get')]);
+    const [drafts, { ready, aiOff }] = await Promise.all([bridge.invoke('drafts:get'), bridge.invoke('status:get')]);
     const ids = new Set(drafts.map(d => d.n));
     for (const [n, box] of cards) if (!ids.has(n)) { box.remove(); cards.delete(n); }
     for (const d of drafts) {
       if (!cards.has(d.n)) { const box = card(d); cards.set(d.n, box); list.append(box); }
-      cards.get(d.n).update(d, !!claude.loggedIn);
+      cards.get(d.n).update(d, ready, aiOff);
     }
   }
   bridge.on('drafts', render);

@@ -18,7 +18,10 @@
   .row { display: flex; align-items: center; gap: 10px; min-height: 38px; }
   .row + .row, .row + .note + .row { border-top: 1px solid var(--line); }
   .name { width: 92px; flex: none; color: var(--muted); }
-  #teamsState, #claudeState, #diagState { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a narrow column cuts the version, not the dot from its word */
+  #teamsState, #diagState, #aiRows .grow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a narrow column cuts the version, not the dot from its word */
+  #aiRows > .row, #aiRows + .row { border-top: 1px solid var(--line); }
+  #aiOthers { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 6px 0; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grow { flex: 1; min-width: 0; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
@@ -56,21 +59,17 @@
           <div class="row"><span class="name">Teams</span><span class="grow" id="teamsState"><span class="dot"></span>…</span><button id="teamsShow" data-i18n="set.open"></button></div>
           <div class="row"><span class="name" data-i18n="set.diag"></span><span class="grow" id="diagState"><span class="dot"></span>…</span><button id="diagCheck" data-i18n="set.check"></button></div>
           <div class="note" id="diagNote"></div>
-          <div class="row"><span class="name">Claude Code</span><span class="grow" id="claudeState"><span class="dot"></span>…</span>
-            <button id="claudeInstall" data-i18n="set.claudeInstall" hidden></button><button id="claudeLogin" data-i18n="act.signIn" hidden></button><button id="claudeCheck" data-i18n="set.check"></button></div>
-          <div class="note" id="claudeNote"></div>
-          <div class="row" data-claude><span class="name" data-i18n="set.models"></span><span class="grow" id="modelsNote"></span><button id="modelsCheck" data-i18n="set.modelsCheck"></button></div>
-          <div class="note" data-claude data-i18n="set.modelsNote"></div>
-        </section>
-      </div>
-
-      <div class="block">
-        <h2 data-i18n="set.inTeams"></h2>
-        <section>
-          <div class="row"><span class="grow" data-i18n="set.keySummary"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></div>
-          <div class="row" data-claude><span class="grow" data-i18n="set.keyReply"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
-          <div class="row" data-claude><span class="grow" data-i18n="set.keyImprove"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></div>
-          <div class="note full" data-i18n="set.keysNote"></div>
+          <label class="row"><input type="checkbox" name="aiOff"> <span data-i18n="set.aiOff"></span></label>
+          <div class="note full" data-ai-off data-i18n="set.aiOffNote"></div>
+          <div id="aiRows" data-ai-on></div>
+          <div class="row" data-ai-on><span class="name" data-i18n="set.aiOthers"></span><span class="grow" id="aiOthers"></span></div>
+          <div class="note" id="aiNote" data-ai-on></div>
+          <div class="row" data-ai-on><span class="name" data-i18n="set.models"></span><span class="grow" id="modelsNote"></span><button id="modelsCheck" data-i18n="set.modelsCheck"></button></div>
+          <div class="note" data-ai data-i18n="set.modelsNote"></div>
+          <div class="row" data-ai-on><span class="name" data-i18n="set.webChat"></span>
+            <select class="grow" name="webChat"><option value="" data-i18n="set.webAuto"></option><option value="claude">Claude</option><option value="chatgpt">ChatGPT</option>
+              <option value="gemini">Gemini</option><option value="m365">Microsoft 365 Copilot</option><option value="github">GitHub Copilot</option></select></div>
+          <div class="note" data-ai-on data-i18n="set.webNote"></div>
         </section>
       </div>
     </div>
@@ -93,6 +92,16 @@
           <div class="note" data-i18n="set.remindNote"></div>
         </section>
       </div>
+
+      <div class="block">
+        <h2 data-i18n="set.inTeams"></h2>
+        <section>
+          <div class="row"><span class="grow" data-i18n="set.keySummary"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></div>
+          <div class="row" data-ai><span class="grow" data-i18n="set.keyReply"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
+          <div class="row" data-ai><span class="grow" data-i18n="set.keyImprove"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></div>
+          <div class="note full" data-i18n="set.keysNote"></div>
+        </section>
+      </div>
     </div>
 
     <div class="col">
@@ -110,7 +119,7 @@
         </section>
       </div>
 
-      <div class="block" data-claude>
+      <div class="block" data-ai>
         <h2 data-i18n="set.claudeMessages"></h2>
         <section>
           <div class="row"><span class="name" data-i18n="set.action"></span>
@@ -129,10 +138,10 @@
     </div>
 
     <div class="col">
-      <div class="block" data-claude>
+      <div class="block">
         <h2 data-i18n="set.summary"></h2>
         <section>
-          <div class="row"><span class="name" data-i18n="set.model"></span>
+          <div class="row" data-ai><span class="name" data-i18n="set.model"></span>
             <select name="summaryModel"></select></div>
           <div class="row"><span class="name" data-i18n="set.digest"></span><input type="time" name="digestAt"></div>
           <div class="note" data-i18n="set.digestNote"></div>
@@ -140,7 +149,7 @@
         </section>
       </div>
 
-      <div class="block" data-claude>
+      <div class="block" data-ai>
         <h2 data-i18n="set.onBehalf"></h2>
         <section>
           <textarea id="style" maxlength="3000" data-i18n-placeholder="set.stylePlaceholder"></textarea>
@@ -159,15 +168,17 @@
   await i18n;
   const $ = id => document.getElementById(id);
   const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-  const spin = () => Object.assign(document.createElement('span'), { className: 'spin' }); // Claude takes a while: show it is working
+  const spin = () => Object.assign(document.createElement('span'), { className: 'spin' }); // the AI takes a while: show it is working
   $('welcome').hidden = !new URLSearchParams(location.search).has('welcome');
   let current = {}, models = {};
   const show = s => {
     current = s;
     document.querySelectorAll('[name]').forEach(el => (el.type === 'checkbox' ? (el.checked = s[el.name]) : (el.value = String(s[el.name]))));
     $('modeNote').textContent = t(`set.note.${s.wakeMode}`);
+    document.querySelectorAll('[data-ai-on]').forEach(el => (el.hidden = s.aiOff)); // "Do not use AI": nothing about AI is left
+    document.querySelectorAll('[data-ai-off]').forEach(el => (el.hidden = !s.aiOff));
     if (document.activeElement !== $('style')) $('style').value = s.style;
-    showModels(); // the model lists hold only what Claude Code reported: pick the chosen ones there
+    showModels(); // the model lists hold only what the AIs reported: pick the chosen ones there
   };
   const save = async patch => {
     try { show(await bridge.invoke('settings:set', patch)); $('status').textContent = t('set.saved'); }
@@ -180,63 +191,86 @@
   document.addEventListener('change', ({ target: el }) => {
     if (el.name) save({ [el.name]: el.type === 'checkbox' ? el.checked : el.value.trim() });
   });
-  // Both model lists come from Claude Code ("Refresh"); a model the plan does not include stays, greyed out with the reason
-  const name = id => { const [, family, ...version] = id.split('-'); return family ? `${family[0].toUpperCase()}${family.slice(1)} ${version.join('.')}`.trim() : id; };
+  // Both model lists hold the models of every AI ready ("provider:model"), grouped by AI; a model the plan does not
+  // include stays, greyed out with the reason, and so does a chosen one whose AI is not ready now.
+  let names = {}; // provider id → its name, from the status
+  const provider = id => id.slice(0, id.indexOf(':'));
+  const name = id => {
+    const slug = id.slice(id.indexOf(':') + 1), [, family, ...version] = slug.split('-');
+    return !slug ? t('set.modelDefault') : provider(id) === 'claude' && family ? `${family[0].toUpperCase()}${family.slice(1)} ${version.join('.')}`.trim() : slug;
+  };
   const traits = { opus: t('set.fam.opus'), sonnet: t('set.fam.sonnet'), haiku: t('set.fam.haiku') };
   function showModels(found = models) {
     models = found;
     for (const select of document.querySelectorAll('select[name$="Model"]')) {
       const ids = Object.keys(models).includes(current[select.name]) || !current[select.name] ? Object.keys(models) : [...Object.keys(models), current[select.name]];
-      select.replaceChildren(...ids.map(id => {
-        const o = document.createElement('option'), bad = !!models[id] && models[id] !== 'ok', trait = traits[id.split('-')[1]];
-        o.value = id; o.disabled = bad; o.title = bad ? models[id] : '';
+      const groups = new Map();
+      for (const id of ids) {
+        if (!groups.has(provider(id))) groups.set(provider(id), Object.assign(document.createElement('optgroup'), { label: names[provider(id)] ?? provider(id) }));
+        const o = document.createElement('option'), bad = !(id in models) || (!!models[id] && models[id] !== 'ok');
+        const trait = provider(id) === 'claude' && traits[id.split('-')[1]];
+        o.value = id; o.disabled = bad; o.title = bad ? models[id] ?? '' : '';
         o.textContent = name(id) + (bad ? ` — ${t('set.modelOff')}` : trait ? ` — ${trait}` : '');
-        return o;
-      }));
+        groups.get(provider(id)).append(o);
+      }
+      select.replaceChildren(...groups.values());
       select.value = current[select.name] ?? '';
     }
-    $('modelsNote').textContent = Object.entries(models).map(([id, r]) => name(id) + (r === 'ok' ? ' ✓' : r ? ' ✗' : '')).join(' · ');
+    const by = Object.groupBy(Object.keys(models), provider);
+    $('modelsNote').textContent = Object.entries(by).map(([p, ids]) => `${names[p] ?? p}: ${ids.filter(id => models[id] === 'ok' || !models[id]).length}/${ids.length}`).join(' · ');
   }
   bridge.invoke('models:get').then(showModels);
   $('modelsCheck').onclick = async () => {
     $('modelsCheck').disabled = true; $('modelsNote').replaceChildren(spin(), t('set.modelsChecking'));
-    try { const found = await bridge.invoke('models:check'); show(await bridge.invoke('settings:get')); showModels(found); } // a chosen model may have moved to its family's newer version
+    try { const found = await bridge.invoke('models:check'); show(await bridge.invoke('settings:get')); showModels(found); refresh(); } // finds programs installed or signed in meanwhile; a chosen model may have moved to its family's newer version
     catch (e) { $('modelsNote').textContent = errorText(e); }
     finally { $('modelsCheck').disabled = false; }
   };
   $('style').onblur = () => save({ style: $('style').value.trim() });
 
   function state(el, text, tone) { const d = document.createElement('span'); d.className = 'dot ' + tone; el.replaceChildren(d, text); el.title = text; }
-  function showStatus({ teams, claude, version, spent, check }) {
+  // One row per AI program found here: its state and, when it needs it, «Sign in»; the ones not installed are links
+  // to their own install pages.
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls ?? '', textContent: text ?? '' });
+  function aiRow(p) {
+    const row = el('div', 'row'), st = el('span', 'grow'), plan = p.plan ? ` · ${p.plan[0].toUpperCase()}${p.plan.slice(1)}` : '';
+    const [text, tone, note] = p.error ? [t('set.aiError'), 'warn', p.error] : p.api ? [t('set.aiApi'), 'warn', t('set.aiApiNote', { name: p.name })]
+      : p.loggedIn === false ? [t('set.aiLoggedOut'), 'warn'] : p.loggedIn === undefined ? [t('set.aiUnknown'), '']
+      : [t('set.aiReady', { version: p.version ?? '' }) + plan, 'ok'];
+    state(st, text, tone);
+    row.append(el('span', 'name', p.name), st);
+    if (p.loggedIn === false || p.api) row.append(Object.assign(el('button', '', t('act.signIn')), { onclick: () => bridge.invoke('ai:login', p.id) }));
+    return note ? [row, el('div', 'note', note)] : [row];
+  }
+  let shownAi = '';
+  function showAi(list, spent) {
+    if (JSON.stringify(list) === shownAi) return;
+    shownAi = JSON.stringify(list);
+    const found = list.filter(p => p.path);
+    $('aiRows').replaceChildren(...found.flatMap(aiRow));
+    $('aiOthers').replaceChildren(...list.filter(p => !p.path).map(p => Object.assign(el('button', 'link', p.name), { onclick: () => bridge.invoke('ai:install', p.id) })));
+    $('aiNote').textContent = !found.length ? t('set.aiNone') : spent ? t('set.spent', { n: Math.max(1, Math.round(spent / 1000)) }) : '';
+    const known = JSON.stringify(names);
+    names = Object.fromEntries(list.map(p => [p.id, p.name]));
+    if (JSON.stringify(names) !== known) showModels();
+  }
+  function showStatus({ teams, ai, ready, version, spent, check }) {
     $('about').textContent = `Soroka ${version} · created by Pavlo Dykalo`;
     const broken = Object.keys(check).filter(k => check[k] === false), checked = Object.keys(check).length > 0;
     const lost = broken.map(k => t(`diag.${k}`)).join(', ');
     state($('diagState'), !checked ? t('set.diagWait') : broken.length ? t('set.diagBroken', { list: lost }) : t('set.diagOk'), !checked ? '' : broken.length ? 'warn' : 'ok');
     $('diagNote').textContent = broken.length ? t('set.diagNote', { list: lost }) : '';
-    $('claudeInstall').hidden = !!claude.path;
-    document.querySelectorAll('[data-claude]').forEach(el => (el.hidden = !claude.loggedIn)); // without Claude Code only the notifications remain
+    document.querySelectorAll('[data-ai]').forEach(el => (el.hidden = !ready)); // without AI only the notifications remain
     const s = { ready: ['set.teamsReady', 'ok'], login: ['set.teamsLogin', 'warn'], starting: ['set.teamsStarting', ''] }[teams];
     state($('teamsState'), t(s[0]), s[1]);
-    $('claudeLogin').hidden = !claude.path || !!claude.loggedIn || !!claude.error;
-    const until = claude.expiresAt ? t('set.claudeUntil', { date: new Date(claude.expiresAt).toLocaleDateString(locale) }) : '';
-    const plan = claude.plan ? claude.plan[0].toUpperCase() + claude.plan.slice(1) : '';
-    const c = !claude.path ? [t('set.claudeMissing'), 'warn', t('set.claudeMissingNote')]
-      : claude.error ? [t('set.claudeError'), 'warn', claude.error]
-      : !claude.loggedIn ? [t('set.claudeLoggedOut'), 'warn', t('set.claudeLoggedOutNote')]
-      : claude.authMethod && claude.authMethod !== 'claude.ai' ? [t('set.claudeApi'), 'warn', t('set.claudeApiNote')]
-      : [t('set.claudeReady', { version: claude.version }), 'ok', t('set.claudePlan', { plan }).replace('  ', ' ') + until];
-    state($('claudeState'), c[0], c[1]);
-    $('claudeNote').textContent = c[2] + (claude.loggedIn && spent ? ` ${t('set.spent', { n: Math.max(1, Math.round(spent / 1000)) })}` : '');
+    showAi(ai, spent);
   }
   const refresh = () => bridge.invoke('status:get').then(showStatus);
   refresh(); setInterval(refresh, 3000);
   $('teamsShow').onclick = () => bridge.invoke('teams:show');
-  $('claudeLogin').onclick = () => bridge.invoke('claude:login');
-  $('claudeInstall').onclick = () => bridge.invoke('claude:install');
   $('diagCheck').onclick = async () => { state($('diagState'), t('set.checking'), ''); await bridge.invoke('teams:check'); refresh(); };
   $('diagCopy').onclick = async () => { await bridge.invoke('report:copy'); $('status').textContent = t('set.diagCopied'); };
   $('notifyTest').onclick = () => bridge.invoke('notify:test');
-  $('claudeCheck').onclick = async () => { state($('claudeState'), t('set.checking'), ''); await bridge.invoke('claude:check'); refresh(); };
   $('styleLearn').onclick = async () => {
     $('styleLearn').disabled = true; $('styleNote').replaceChildren(spin(), t('set.styleReading'));
     try { $('style').value = await bridge.invoke('style:learn'); await save({ style: $('style').value.trim() }); $('styleNote').textContent = t('set.styleDone'); }

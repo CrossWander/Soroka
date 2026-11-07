@@ -1,5 +1,5 @@
 // Claude Code found on this computer: no API keys, every call counts against the plan of whoever signed in to Claude Code.
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,10 +14,16 @@ function candidates() {
     path.join(home, '.local', 'bin'), // native installer
     ...(process.env.PATH ?? '').split(path.delimiter),
     ...(process.platform === 'win32' ? [path.join(process.env.APPDATA ?? '', 'npm')] : ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.claude', 'local')]),
+    ...desktop(),
   ];
   return dirs.filter(Boolean).flatMap(d => names.map(n => path.join(d, n)));
 }
-export const find = () => candidates().find(p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+// Claude Desktop brings its own Claude Code, signed in with the same account: <app data>/Claude/claude-code/<version>/, newest first
+function desktop() {
+  const dir = process.platform === 'win32' ? path.join(process.env.APPDATA ?? '', 'Claude', 'claude-code') : path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude-code');
+  try { return fs.readdirSync(dir).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map(v => path.join(dir, v)); } catch { return []; }
+}
+export const find = () =>candidates().find(p => { try { return fs.statSync(p).isFile(); } catch { return false; } });
 
 // Never the API: with one of these set, Claude Code would bill an API key or a cloud account instead of the signed-in plan.
 const API_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
@@ -86,15 +92,4 @@ export async function probe(alias: string): Promise<{ id: string; error?: string
   const events = [JSON.parse(out)].flat();
   const result = events.at(-1);
   return { id: events.find(e => e.type === 'system')?.model || alias, error: result?.is_error ? String(result.result) : undefined };
-}
-
-// Sign-in happens in a terminal window the user sees and completes themselves.
-export function openLogin() {
-  const exe = find();
-  if (!exe) return;
-  if (process.platform === 'win32')
-    spawn('cmd.exe', ['/c', `start "Claude Code" cmd /k ""${exe}" auth login"`], { windowsVerbatimArguments: true, detached: true, stdio: 'ignore' }).unref();
-  else if (process.platform === 'darwin')
-    spawn('osascript', ['-e', `tell application "Terminal" to do script "'${exe}' auth login"`], { detached: true, stdio: 'ignore' }).unref();
-  else spawn('x-terminal-emulator', ['-e', exe, 'auth', 'login'], { detached: true, stdio: 'ignore' }).unref();
 }

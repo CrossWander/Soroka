@@ -17,8 +17,8 @@
   #pick p { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
   /* both labels take the same cell: the button keeps its width when "Summarize" turns into "Stop" */
-  #go { display: inline-grid; } #go > span { grid-area: 1 / 1; }
-  #go > span + span, #go.running > span:first-child { visibility: hidden; } #go.running > span + span { visibility: visible; }
+  :is(#go, #plain) { display: inline-grid; } :is(#go, #plain) > span { grid-area: 1 / 1; }
+  :is(#go, #plain) > span + span, :is(#go, #plain).running > span:first-child { visibility: hidden; } :is(#go, #plain).running > span + span { visibility: visible; }
   button:disabled { opacity: .5; }
   .statusline { display: flex; align-items: center; gap: 8px; min-height: 1.4em; color: var(--muted); }
   #status.error { color: var(--error); }
@@ -44,6 +44,7 @@
   <fieldset id="pick" hidden><p data-i18n="summary.pickHint"></p><div id="picklist"></div></fieldset>
   <div class="row">
     <button class="go" id="go"><span data-i18n="summary.go"></span><span data-i18n="summary.stop"></span></button>
+    <button id="plain" data-i18n-title="summary.plainTip"><span data-i18n="summary.plain"></span><span data-i18n="summary.stop"></span></button>
     <button id="handoff" data-i18n="summary.handoff" data-i18n-title="summary.handoffTip"></button>
   </div>
   <div class="row"><input id="question" maxlength="500" data-i18n-placeholder="summary.askPh"><button id="ask" data-i18n="summary.ask"></button></div>
@@ -54,7 +55,7 @@
 </main>
 <script src="i18n.js"></script>
 <script type="module">
-  // The summary is Claude's text about Teams messages: textContent only.
+  // The summary is text about Teams messages (the AI's, or picked from them): textContent only.
   const $ = id => document.getElementById(id);
   const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   let chats = [], preset = null, running = false;
@@ -130,31 +131,36 @@
     if (!list.length) { $('status').className = 'error'; $('status').textContent = t('summary.pickNone'); return; }
     return { ...c, title: list.map(x => x.title).join(', ').slice(0, 80), ask: { chats: list } };
   }
-  async function run(question) {
+  // plain: the summary without AI (what waits for the user, issues, links, dates) instead of the AI's
+  async function run(question, plain = false) {
     const c = target();
     if (!c) return;
-    $('spin').hidden = false; running = true; $('go').classList.add('running'); $('chat').disabled = true; digestPicked(); $('copy').hidden = true; $('out').textContent = ''; showJira('');
+    const [mine, other] = plain ? [$('plain'), $('go')] : [$('go'), $('plain')]; // the one clicked turns into «Stop»
+    $('spin').hidden = false; running = true; mine.classList.add('running'); other.disabled = true; $('chat').disabled = true; digestPicked(); $('copy').hidden = true; $('out').textContent = ''; showJira('');
     $('status').className = '';
-    $('status').textContent = t(question ? 'summary.asking' : 'summary.running', { title: c.title }) + (summaryBackground ? ` ${t('summary.canClose')}` : '');
-    try { show(await bridge.invoke('summary:run', c.id, c.title, $('period').value, { ...c.ask, question }), c, question); }
+    $('status').textContent = t(plain ? 'summary.reading' : question ? 'summary.asking' : 'summary.running', { title: c.title }) + (summaryBackground ? ` ${t('summary.canClose')}` : '');
+    try { show(await bridge.invoke('summary:run', c.id, c.title, $('period').value, { ...c.ask, question, plain }), c, question); }
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
-    finally { running = false; $('spin').hidden = true; $('go').classList.remove('running'); $('chat').disabled = false; digestPicked(); checkClaude(); }
+    finally { running = false; $('spin').hidden = true; mine.classList.remove('running'); $('plain').disabled = false; $('chat').disabled = false; digestPicked(); checkAi(); }
   }
-  // Without Claude Code only «Open in Claude» (claude.ai) is left
-  async function checkClaude() {
-    const { claude } = await bridge.invoke('status:get');
+  // Without AI the summary without AI is the main button, and the question and the AI's own summary go
+  async function checkAi() {
+    const { ready, aiOff } = await bridge.invoke('status:get');
     if (running) return;
-    $('go').disabled = $('ask').disabled = !claude.loggedIn;
-    $('go').title = $('ask').title = claude.loggedIn ? '' : t('claude.needed');
+    $('go').disabled = $('ask').disabled = !ready;
+    $('go').hidden = $('question').parentElement.hidden = !ready;
+    $('plain').classList.toggle('go', !ready);
+    $('handoff').hidden = !!aiOff; // "Do not use AI": not the AI sites either
   }
-  checkClaude();
-  window.addEventListener('focus', checkClaude);
+  checkAi();
+  window.addEventListener('focus', checkAi);
   $('go').onclick = () => (running ? bridge.invoke('summary:stop') : run());
+  $('plain').onclick = () => (running ? bridge.invoke('summary:stop') : run(undefined, true));
   // «Ask»: a question about the same chat and period instead of a summary
   const ask = () => { const q = $('question').value.trim(); if (q && !running && !$('ask').disabled) run(q); };
   $('ask').onclick = ask;
   $('question').onkeydown = e => { if (e.key === 'Enter') ask(); };
-  // Without Claude Code: the same request (with the question, if one is typed) goes to the clipboard and claude.ai opens
+  // Without AI: the same request (with the question, if one is typed) goes to the clipboard and the AI chat site opens
   $('handoff').onclick = async () => {
     const c = target();
     if (!c) return;
