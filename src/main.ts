@@ -1130,6 +1130,8 @@ function startApi() {
 app.on('second-instance', showTeams);
 app.on('window-all-closed', () => { /* keep running in the tray */ });
 app.on('before-quit', () => { quitting = true; });
+// a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray
+app.on('web-contents-created', (_e, wc) => wc.on('will-prevent-unload', e => e.preventDefault()));
 app.whenReady().then(async () => {
   app.dock?.hide();
   if (!settings.language) settings.language = i18n.systemLang(app.getSystemLocale()); // saved with the next settings change

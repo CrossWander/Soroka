@@ -55,13 +55,14 @@ const label = (s: string, cx: number, cy: number, cell: number): Shape => {
 /** RGBA pixels of a size×size icon; `badge` is "1".."9", "9+" or "!"; `grey` while not connected. */
 export function draw(size: number, { badge, grey }: { badge?: string; grey?: boolean } = {}) {
   const tile = grey ? GREY : PURPLE, k = size / 32;
-  // the magpie faces left, so a badge in the top right corner leaves its head in view
+  const m = size > 32 ? 1 : 0; // no margin at tray sizes: there it only made the tile smaller than its neighbours and blurred its edge
+  // the magpie faces left, so a badge in the bottom right corner covers only its tail
   const body = ellipse(16, 17.5, 7.2, 4.9, 22), wing = ellipse(18, 15.8, 6.2, 2.4, 22);
   // the wing is a white vyshyvanka sleeve inside a thin black rim (at least ¾ px), which parts it from the tile and the belly
   const rim = Math.max(0.6, 0.75 / k), sleeve = both(ellipse(16, 17.5, 7.2 - rim, 4.9 - rim, 22), ellipse(18, 15.8, 6.2 - rim, 2.4 - rim, 22));
   const [red, black] = embroidery(18, 15.8, 22, size, k);
-  const layers: [Shape, RGBA][] = [ // design grid 32×32, later layers on top
-    [rrect(1, 1, 31, 31, 7), tile],
+  const layers: [Shape, RGBA | null][] = [ // design grid 32×32, later layers on top; null cuts a hole
+    [rrect(m, m, 32 - m, 32 - m, 7), tile],
     [any(tri(19.5, 18, 21, 21.5, 29.5, 29), tri(19.5, 18, 29.5, 29, 30.5, 26.5)), INK], // the long tail, down to the right
     [any(body, circle(9.2, 10.6, 3.9), ellipse(11.6, 13.4, 3.4, 3, -35)), INK], // body, head and neck
     [tri(6, 9.4, 1.8, 11, 6, 12.5), INK], // beak
@@ -71,14 +72,19 @@ export function draw(size: number, { badge, grey }: { badge?: string; grey?: boo
     [both(both(body, ellipse(13.4, 20.6, 5.2, 3.2, 12)), (x, y) => !wing(x, y)), WHITE], // the white belly, below the rim
     [circle(8.2, 9.8, 0.75), WHITE], // eye
   ];
-  if (badge) layers.push([circle(25, 7, 7.4), WHITE], [circle(25, 7, 6.2), RED], [label(badge, 25, 7, badge.length > 1 ? 1.15 : 1.5), WHITE]);
+  if (badge) { // like Teams: a pill in the bottom right corner, cut out of the tile; the digits on whole pixels stay sharp
+    const c = Math.max(1, Math.floor(size / 16)), h = 9 * c, w = Math.max(h, (badge.length * 4 - 1) * c + 4 * c);
+    const x0 = (size - w) / k, y0 = (size - h) / k, g = c / k;
+    layers.push([rrect(x0 - g, y0 - g, 32 + g, 32 + g, h / 2 / k + g), null], [rrect(x0, y0, 32, 32, h / 2 / k), RED],
+      [label(badge, x0 + w / 2 / k, y0 + h / 2 / k, g), WHITE]);
+  }
 
   const N = 4, px = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     let r = 0, g = 0, b = 0, hits = 0;
     for (let sy = 0; sy < N; sy++) for (let sx = 0; sx < N; sx++) { // 4×4 supersampling for smooth edges
       const u = (x + (sx + 0.5) / N) / k, v = (y + (sy + 0.5) / N) / k;
-      for (let i = layers.length - 1; i >= 0; i--) if (layers[i][0](u, v)) { const c = layers[i][1]; r += c[0]; g += c[1]; b += c[2]; hits++; break; }
+      for (let i = layers.length - 1; i >= 0; i--) if (layers[i][0](u, v)) { const c = layers[i][1]; if (c) { r += c[0]; g += c[1]; b += c[2]; hits++; } break; }
     }
     const i = (y * size + x) * 4;
     if (hits) { px[i] = r / hits; px[i + 1] = g / hits; px[i + 2] = b / hits; px[i + 3] = (255 * hits) / (N * N); }
