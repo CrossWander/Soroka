@@ -196,14 +196,17 @@ export async function models(ids: string[]) {
   return Object.assign({}, ...lists) as Record<string, string>;
 }
 
-// One answer from a model, as text. A failure says which provider and whether it needs sign-in.
+// The plan's limit spent, or the AI too busy for now: another AI can take the request (ai: 'limit')
+const LIMIT = /usage limit|(?<!context )limit reached|hit your( usage)? limit|weekly limit|rate.?limit|quota|resource.?exhausted|too many requests|\b429\b|overloaded|\b529\b|allowance/i;
+// One answer from a model, as text. A failure says which provider and whether it needs sign-in or is past its limit.
 export async function ask(system: string, prompt: string, model: string, signal?: AbortSignal) {
   const id = providerOf(model), p = byId(id), exe = p?.exe();
   if (!p || !exe) throw Object.assign(new Error(t('err.aiMissing')), { ai: 'missing', provider: id });
   try { return await p.ask(exe, system, prompt, model.slice(id.length + 1), signal); }
   catch (e) {
     if (signal?.aborted) throw new Error(t('err.stopped'));
-    const text = lastLine(e), kind = (e as { claude?: string }).claude ?? (/log ?in|sign ?in|authenticat|unauthori[sz]ed|expired|\b401\b/i.test(text) ? 'login' : undefined);
+    const text = lastLine(e), kind = (e as { claude?: string }).claude
+      ?? (LIMIT.test(text) ? 'limit' : /log ?in|sign ?in|authenticat|unauthori[sz]ed|expired|\b401\b/i.test(text) ? 'login' : undefined);
     throw Object.assign(new Error(kind === 'login' ? t('err.aiLogin', { name: p.name }) : text.startsWith(p.name) ? text : `${p.name}: ${text}`), { ai: kind, provider: id });
   }
 }

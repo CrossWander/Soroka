@@ -50,6 +50,8 @@ const S: Record<string, [string, string, string]> = {
   'toast.teamsLoginText': ['Сесія завершилася — сповіщення й відповіді чекають на вхід.', 'The session ended: notifications and replies wait for you to sign in.', 'Сессия закончилась — уведомления и ответы ждут входа.'],
   'toast.teamsLoginHint': ['Натисніть, щоб увійти', 'Click to sign in', 'Нажмите, чтобы войти'],
   'toast.aiLogin': ['Потрібно увійти в {name}', 'Sign in to {name}', 'Нужно войти в {name}'],
+  'toast.aiLimit': ['{name}: ліміт вичерпано', '{name} hit its limit', '{name}: лимит исчерпан'],
+  'toast.aiLimitText': ['Поки що відповідає {name}.', 'Meanwhile {name} answers.', 'Пока отвечает {name}.'],
   'toast.aiLoginText': ['Без входу підказки відповідей і підсумки не працюють.', 'Without signing in, reply suggestions and summaries do not work.', 'Без входа подсказки ответов и выжимки не работают.'],
   'toast.aiMissing': ['ШІ не підключено', 'No AI connected', 'ИИ не подключён'],
   'toast.aiMissingText': ['Підказки відповідей і підсумки працюють через програму вашої підписки ШІ: Claude Code, Codex (ChatGPT), Gemini, Copilot…', 'Reply suggestions and summaries run through the program of your AI plan: Claude Code, Codex (ChatGPT), Gemini, Copilot…', 'Подсказки ответов и выжимки работают через программу вашей подписки ИИ: Claude Code, Codex (ChatGPT), Gemini, Copilot…'],
