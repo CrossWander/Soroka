@@ -36,7 +36,7 @@ const errorText = (e: unknown) => (e as Error).message;
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
+  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
 const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-haiku-5-5'];
@@ -51,14 +51,14 @@ const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
+  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
 const isTime = (v: unknown) => v === '' || (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const CHECKS: Record<string, (v: unknown) => boolean> = {
   style: isText(3000), onlyFrom: isText(1000), keywords: isText(1000), quietFrom: isTime, quietTo: isTime, digestAt: isTime,
-  muteFrom: isText(1000), tones: isText(3000), quietDnd: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
+  muteFrom: isText(1000), tones: isText(3000), quickReplies: isText(500), quietDnd: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
   jiraUrl: v => v === '' || (isText(200)(v) && /^https:\/\/[^\s/]+(\/\S*)?$/.test(v as string)),
   label: v => typeof v === 'boolean', autostart: v => typeof v === 'boolean', summaryBackground: v => typeof v === 'boolean',
   draftModel: v => usable().includes(v as string), summaryModel: v => usable().includes(v as string),
@@ -82,6 +82,8 @@ const modelFor = (key: 'draftModel' | 'summaryModel') => {
   return free(choice) ? choice : ok.find(free) ?? choice;
 };
 const list = (s: string) => s.split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
+// Quick replies: a click puts one into the reply field, the user sends it. None set: the built-in ones of the app's language.
+const quickReplies = () => (settings.quickReplies.trim() || t('quick.default')).split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5);
 // "Not to AI": the chats and people whose messages never go to Claude — no drafts, summaries, style or Claude sessions.
 const aiSkipped = (title: string) => list(settings.aiSkip).some(name => title.toLowerCase().includes(name));
 const notToAi = (title: string) => { if (aiSkipped(title)) throw Object.assign(new Error(t('err.aiSkip', { title })), { status: 403 }); };
@@ -294,7 +296,7 @@ ipcMain.handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings();
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
 type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; click?: () => void;
-  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean } };
+  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[] } };
 let toastWin: BrowserWindow | null = null;
 let toastHandlers: ((() => void) | undefined)[] = [];
 // One card at a time: a newer one waits its turn instead of wiping out the one on screen.
@@ -932,7 +934,7 @@ function announce(n: string, why?: string) {
   // the card itself opens the chat; replying, Teams' quick reactions and the rest are in the card (ui/toast.html)
   toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => openInTeams(d.chatId),
     hint: why ?? (d.error ? t('toast.replyFailed') : ready ? t('toast.replyReady') : undefined),
-    reply: { n, variants: d.variants ?? [], ai: aiReady() },
+    reply: { n, variants: d.variants ?? [], ai: aiReady(), quick: quickReplies() },
     actions: [{ label: `📝 ${t('act.summary')}`, run: () => showSummary(d.chatId) }] });
 }
 // ---------- calls and meetings ----------
@@ -1237,7 +1239,7 @@ const logged = <A extends unknown[], T>(what: string, fn: (...a: A) => T | Promi
 ipcMain.handle('settings:get', () => settings);
 ipcMain.handle('i18n:get', () => ({ ...i18n.current(), strings: i18n.table() }));
 ipcMain.handle('settings:set', (_e, input) => updateSettings(input));
-ipcMain.handle('status:get', () => ({ teams: status, ai: aiInfo, ready: aiReady(), aiOff: settings.aiOff, version: app.getVersion(), check: teamsCheck,
+ipcMain.handle('status:get', () => ({ teams: status, ai: aiInfo, ready: aiReady(), aiOff: settings.aiOff, quick: quickReplies(), version: app.getVersion(), check: teamsCheck,
   spent: state.spent.day === new Date().toDateString() ? state.spent.tokens : 0 }));
 ipcMain.handle('ai:login', (_e, id: string) => ai.login(String(id)));
 ipcMain.handle('ai:install', (_e, id: string) => { const url = ai.installPage(String(id)); if (url) void shell.openExternal(url); }); // only the pages in the registry

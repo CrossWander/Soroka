@@ -53,6 +53,10 @@
   .menu button:hover { background: var(--btn-hover); }
   .reply { grid-column: 2 / 4; display: flex; gap: 6px; margin-top: 10px; cursor: default; }
   .reply input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--fg); }
+  /* quick replies under the field: a click puts one into it */
+  .quick { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; cursor: default; }
+  .quick button { font-size: 12px; padding: 2px 9px; border-radius: 10px; background: var(--btn); }
+  .quick button:hover { background: var(--btn-hover); }
   .tool { width: 30px; background: var(--btn); font-size: 14px; }
   .tool:hover { background: var(--btn-hover); }
   .send { width: 32px; background: var(--accent); color: var(--on-accent); }
@@ -76,6 +80,7 @@
       <button class="tool" id="ai" data-i18n-title="card.ai">✨</button>
       <button class="send" id="send" data-i18n-title="card.send">➤</button>
     </div>
+    <div class="quick" id="quick" hidden></div>
     <div class="row" id="row" hidden>
       <button class="main" id="open" data-i18n="act.reply"></button>
       <button class="emoji" data-react="yes"><span><img alt="👍"></span></button><button class="emoji" data-react="heart"><span><img alt="❤️"></span></button><button class="emoji" data-react="laugh"><span><img alt="😆"></span></button>
@@ -111,8 +116,14 @@
     say(t.hint || '');
     $('close').title = t.closeLabel;
     n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false;
-    $('row').hidden = !n; $('reply').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
+    $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
     $('ai').hidden = !t.reply?.ai;
+    $('quick').replaceChildren(...(t.reply?.quick ?? []).map(q => {
+      const b = document.createElement('button');
+      b.textContent = q;
+      b.onclick = e => { e.stopPropagation(); $('field').value = q; $('field').focus(); };
+      return b;
+    }));
     const buttons = t.actions.map((label, i) => { // a message card puts them in its "⋯" menu
       const b = document.createElement('button');
       b.textContent = label;
@@ -134,7 +145,7 @@
   $('open').onclick = async e => { // the field opens in the card: the card stays and takes the keyboard
     e.stopPropagation();
     replying = true; clearTimeout(timer);
-    $('open').hidden = true; $('reply').hidden = false;
+    $('open').hidden = true; $('reply').hidden = false; $('quick').hidden = !$('quick').children.length;
     if (variants.length && !$('field').value) $('field').value = variants[next++ % variants.length]; // already made: drafts mode
     await bridge.invoke('toast:focus');
     await fit();
@@ -164,9 +175,9 @@
   $('send').onclick = e => { e.stopPropagation(); send(); };
   $('field').onkeydown = e => {
     if (e.key === 'Enter') send();
-    if (e.key === 'Escape') { replying = false; $('reply').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
+    if (e.key === 'Escape') { replying = false; $('reply').hidden = $('quick').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
   };
-  $('reply').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
+  $('reply').onclick = $('quick').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
   for (const img of document.querySelectorAll('[data-react] img')) { // Teams' animated picture by the reaction's id; offline, the font's glyph
     img.onerror = () => img.parentElement.replaceWith(img.alt);
     img.onload = () => img.style.setProperty('--frames', img.naturalHeight / img.naturalWidth); // square frames, one under another
