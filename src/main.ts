@@ -36,7 +36,7 @@ const errorText = (e: unknown) => (e as Error).message;
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
+  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
 const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-haiku-5-5'];
@@ -44,14 +44,15 @@ const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:cl
 // remindAfter: minutes a personal message may wait for an answer before a reminder; '' = never
 // followUpAfter: the same for the user's own question that nobody answered
 // webChat: the site "Open in AI chat" opens; '' = the one of the model's provider, else claude.ai
+// links: where web links from Teams and the cards open; '' = a window of the app, 'browser' = the default browser
 const OPTIONS: Record<string, unknown[]> = { wakeMode: ['notify', 'drafts', 'monitor'], language: i18n.LANGS, remindAfter: ['', '60', '240', '1440'],
-  followUpAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'],
+  followUpAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'], links: ['', 'browser'],
   webChat: ['', ...Object.keys(ai.WEB)] };
 const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
+  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
@@ -400,9 +401,13 @@ function newTeamsPage() {
   });
   // Microsoft's sign-in, and links (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so
   // Microsoft 365 opens signed in. Only web pages: other schemes would start programs.
-  page.setWindowOpenHandler(({ url }) => /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? { action: 'allow' }
-    : /^https?:\/\//.test(url) ? { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true } }
-    : { action: 'deny' });
+  // "Links: in the browser" sends the pages to the default browser; Microsoft's sign-in stays here, Teams needs it.
+  page.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow' };
+    if (!/^https?:\/\//.test(url)) return { action: 'deny' };
+    if (settings.links === 'browser') { void shell.openExternal(url); return { action: 'deny' }; }
+    return { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true } };
+  });
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
   teams.attach(page);
@@ -1307,8 +1312,16 @@ ipcMain.handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: s
 ipcMain.handle('models:get', () => models());
 ipcMain.handle('models:check', logged('models', async () => { await refreshAi(); return checkModels(); }));
 // Issue keys found in messages open in Jira; nothing else is opened from here.
-ipcMain.handle('open:jira', (_e, key: string) => {
-  if (settings.jiraUrl && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) void shell.openExternal(`${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`);
+// A web page in a window of the app, with Teams' session: Microsoft 365 opens signed in, and so does Jira once signed in there.
+function webWindow(url: string) {
+  const win = new BrowserWindow({ width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true, webPreferences: { partition: 'persist:teams' } });
+  void win.loadURL(url);
+  return win;
+}
+ipcMain.handle('open:jira', (_e, key: string) => { // where the links of Teams open: here or in the browser
+  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) return;
+  const url = `${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`;
+  if (settings.links === 'browser') void shell.openExternal(url); else webWindow(url);
 });
 // A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
 // its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
@@ -1326,11 +1339,8 @@ ipcMain.handle('jira:issue', async (_e, key: string) => {
   jiraSeen.set(key, { at: Date.now(), issue });
   return issue;
 });
-ipcMain.handle('jira:login', () => {
-  if (!settings.jiraUrl) return;
-  const win = new BrowserWindow({ width: 900, height: 720, icon: APP_ICON, autoHideMenuBar: true, webPreferences: { partition: 'persist:teams' } });
-  void win.loadURL(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`);
-  win.on('closed', () => toPanel('drafts')); // the cards ask Jira again
+ipcMain.handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
+  if (settings.jiraUrl) webWindow(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
 });
 ipcMain.handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
 ipcMain.handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
