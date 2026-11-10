@@ -21,7 +21,7 @@
   select.later option { color: var(--fg); background: var(--card); }
   .jira { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
   .jira:empty { display: none; }
-  .jira button { font-size: 12px; padding: 1px 8px; }
+  .jira button { font-size: 12px; padding: 1px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   blockquote { margin: 6px 0; padding-left: 8px; border-left: 3px solid var(--line); color: var(--muted); max-height: 5.6em; overflow: hidden; }
   .variants { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
   .variants button { text-align: left; background: var(--chip); border: 1px solid transparent; border-radius: 6px; padding: 5px 8px; font: inherit; color: var(--fg); cursor: pointer; }
@@ -112,7 +112,17 @@
       suggest.hidden = handoff.hidden = aiOff; // "Do not use AI": the card is for replying by hand
       said.textContent = d.last || ''; said.hidden = !d.last; // a newer message in the chat replaces it
       const keys = jiraUrl ? [...new Set([d.last, ...(d.variants || [])].join(' ').match(/\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g) || [])] : [];
-      jira.replaceChildren(...keys.map(k => { const b = el('button', '', `${k} ↗`); b.onclick = () => bridge.invoke('open:jira', k); return b; }));
+      if (jira.dataset.keys !== keys.join()) { // the same keys: the buttons stay, Jira is not asked again
+        jira.dataset.keys = keys.join();
+        jira.replaceChildren(...keys.map(k => {
+          const b = el('button', '', `${k} ↗`); b.onclick = () => bridge.invoke('open:jira', k);
+          bridge.invoke('jira:issue', k).then(i => { // its name and status, from Jira as the user
+            if (i?.summary) { b.textContent = `↗ ${k} · ${i.status} · ${i.summary}`; b.title = `${k} · ${i.status}\n${i.summary}`; }
+            else if (i?.login) { b.textContent = `${k} · ${t('jira.login')}`; b.onclick = () => bridge.invoke('jira:login'); jira.dataset.keys = ''; } // asked again after the sign-in
+          }, () => {});
+          return b;
+        }));
+      }
       busy.hidden = !d.busy;
       suggest.disabled = !!d.busy || !ready; // without AI: «Open in AI chat» above still works
       suggest.title = ready ? '' : t('ai.needed');

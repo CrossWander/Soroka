@@ -1282,6 +1282,28 @@ ipcMain.handle('models:check', logged('models', async () => { await refreshAi();
 ipcMain.handle('open:jira', (_e, key: string) => {
   if (settings.jiraUrl && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) void shell.openExternal(`${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`);
 });
+// A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
+// its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
+const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
+ipcMain.handle('jira:issue', async (_e, key: string) => {
+  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) return null;
+  const hit = jiraSeen.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.issue;
+  const r = await session.fromPartition('persist:teams').fetch(`${settings.jiraUrl.replace(/\/+$/, '')}/rest/api/2/issue/${key}?fields=summary,status`,
+    { headers: { Accept: 'application/json' }, credentials: 'include' }).catch(() => undefined); // include: the session's cookies
+  if (r?.status === 401) return { login: true };
+  if (!r?.ok) return null; // no such ticket, no access to it, or Jira away
+  const j = await r.json().catch(() => undefined);
+  const issue = { summary: String(j?.fields?.summary ?? ''), status: String(j?.fields?.status?.name ?? '') };
+  jiraSeen.set(key, { at: Date.now(), issue });
+  return issue;
+});
+ipcMain.handle('jira:login', () => {
+  if (!settings.jiraUrl) return;
+  const win = new BrowserWindow({ width: 900, height: 720, icon: APP_ICON, autoHideMenuBar: true, webPreferences: { partition: 'persist:teams' } });
+  void win.loadURL(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`);
+  win.on('closed', () => toPanel('drafts')); // the cards ask Jira again
+});
 ipcMain.handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
 ipcMain.handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
 
