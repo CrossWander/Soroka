@@ -91,10 +91,10 @@ for (const k of ['draftModel', 'summaryModel'] as const) if (!settings[k].includ
 if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify'; // "off" and "loop" before 0.5.3: notifications no longer switch off
 
 // incoming: made for a message to the user (not by "Suggest reply" on any chat); remindAt: snoozed until then;
-// reminded: the "still waiting for your answer" reminder went out; answered: the user replied in Teams itself;
+// reminded: the "still waiting for your answer" reminder went out; answered: the user replied in Teams itself; read: read it there;
 // improve: "Improve my text" — `last` is the user's own unsent text from the compose box, and sending replaces it
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
-  context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean };
+  context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean };
 // seen: per chat, the last message announced ("time|preview"); models: last result of "Check models"; digestDay: date of the last daily digest
 const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string, Draft>, seen: {} as Record<string, string>,
   models: {} as Record<string, string>, digestDay: '', summaries: {} as Record<string, Summary & { at: number }>, // summaries: the last one per chat
@@ -952,12 +952,18 @@ function remind() {
 }
 // ponytail: Teams writes the user's own last message as "Вы: …" / "Ви: …" / "You: …" (ru/uk/en UI); other languages are not caught
 const MINE = /^(Вы|Ви|You): /;
-// The user answered in Teams itself: their message is now the chat's last one, so its card is done.
+// A message's card is done when the user answered in Teams itself (their message is now the chat's last one), or read
+// the chat without asking the app for anything on it: no reply variants asked for or failing, not snoozed.
+// In drafts mode the app reads the chat itself, but its card has the variants (or their error) by then.
 function closeAnswered(chats: teams.Chat[]) {
   let changed = false;
   for (const [, d] of waiting()) {
-    if (!d.incoming || !chats.some(c => c.id === d.chatId && MINE.test(c.preview))) continue; // "Suggest reply" may be asked on a chat the user wrote last
-    d.status = 'answered'; delete d.context; changed = true;
+    const c = d.incoming && chats.find(x => x.id === d.chatId); // "Suggest reply" may be asked on a chat the user wrote last
+    if (!c) continue;
+    if (MINE.test(c.preview)) d.status = 'answered';
+    else if (!c.unread && !d.variants?.length && !d.busy && !d.error && !d.remindAt) d.status = 'read';
+    else continue;
+    delete d.context; changed = true;
   }
   if (changed) draftsChanged();
 }
