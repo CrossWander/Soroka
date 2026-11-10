@@ -1,7 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BrowserWindow, Menu, Tray, WebContentsView, clipboard, ipcMain, nativeImage, nativeTheme, screen, session, shell } from 'electron';
+import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, ipcMain, nativeImage, nativeTheme, screen, session, shell } from 'electron';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -297,30 +297,40 @@ function createTeamsWindow() {
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, webPreferences: { preload } });
   teamsWin.removeMenu();
   teamsWin.loadFile(ui('strip.html'));
-  const view = new WebContentsView({ webPreferences: { session: ses, backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
-  teamsWin.contentView.addChildView(view);
-  teamsPage = view.webContents;
-  const layout = () => { view.setBounds(below(STRIP)); settingsView?.setBounds(below(0)); };
-  layout();
   teamsWin.on('resize', layout);
-  for (const wc of [teamsPage, teamsWin.webContents]) wc.on('before-input-event', hotkey);
+  teamsWin.webContents.on('before-input-event', hotkey);
+  teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
+  // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
+  teamsWin.on('hide', () => { closeSettings(); if (status === 'ready') serial(() => restoreChat()).catch(e => log('park:', errorText(e))); });
+  newTeamsPage();
+}
+let teamsView: WebContentsView;
+const layout = () => { teamsView.setBounds(below(STRIP)); settingsView?.setBounds(below(0)); };
+// The Teams page of the main window. A call takes it to a window of its own (popOutCall), and a new one comes here.
+function newTeamsPage() {
+  const view = teamsView = new WebContentsView({ webPreferences: { session: session.fromPartition('persist:teams'), backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
+  teamsWin.contentView.addChildView(view, 0); // under the settings, if they are open
+  const page = teamsPage = view.webContents;
+  layout();
+  const main = () => page === teamsPage; // the page gone to a call window keeps these handlers: they must not act for it
+  page.on('before-input-event', (e, i) => { if (main()) hotkey(e, i); });
   // "(2) Чат | POS team | Microsoft Teams": the middle part is the chat in view (by position, not by words)
-  teamsPage.on('page-title-updated', (_e, title) => {
+  page.on('page-title-updated', (_e, title) => {
+    if (!main()) return;
     const parts = title.replace(/^\(\d+\)\s*/, '').split(' | ');
     chatInView = parts.length > 2 ? parts.slice(1, -1).join(' | ') : '';
     pushStrip();
   });
-  teamsPage.setWindowOpenHandler(({ url }) => ({ action: /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? 'allow' : 'deny' }));
-  teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
-  // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
-  teamsWin.on('hide', () => { closeSettings(); if (status === 'ready') serial(() => restoreChat()).catch(e => log('park:', errorText(e))); });
+  page.setWindowOpenHandler(({ url }) => ({ action: /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? 'allow' : 'deny' }));
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
-  teamsPage.on('did-finish-load', () => { if (status === 'ready') void watch(); });
+  page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
+  teams.attach(page);
 }
 // Teams reports a change of the unread chats: look at once instead of waiting for the timer
 const watch = () => Promise.all([
   teams.watchChats(() => { log('unread chats changed'); void tick(); }), // the timer still checks if this fails
   teams.watchRings(onRing),
+  teams.watchCall(onCall),
 ]).catch(e => log('watch:', errorText(e)));
 // One click on the tray icon: the Teams window, as in the Teams app.
 function showTeams() {
@@ -837,8 +847,42 @@ async function ringAction(i: number) {
   if (!r || !b) return closeRing();
   if (r.live) await teams.ringClick(i); // not through serial(): a call cannot wait for a summary that reads history
   else if (!b.reject) await serial(() => teams.joinMeeting(`${r.title} ${r.message}`));
-  if (!b.reject) showTeams();
+  // an accepted call comes up in its own window (onCall); a meeting first shows Teams' join screen in the main one
+  if (b.reject) { /* nothing to show */ }
+  else if (r.live && r.kind === 'call') setTimeout(() => { if (!callWin) showTeams(); }, 5000); // it never came up as a call: show where it is
+  else showTeams();
   closeRing();
+}
+
+// ---------- a call in a window of its own, as in the Teams app ----------
+// The call lives in the Teams page, so the whole page moves to the call window, and the main window gets a fresh page
+// for the chats. The second page lives only while the call does: the window closes when the call ends, closing it leaves the call.
+let callWin: BaseWindow | null = null;
+let callPage: Electron.WebContents | null = null;
+function onCall(on: boolean) { // either page may report: the main one a call starting, the call window's one its end
+  if (on && !callWin) popOutCall();
+  else if (!on && callWin) void callPage!.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.HANGUP)})`)
+    .then(still => { if (!still) callWin?.close(); }, () => callWin?.close());
+}
+function popOutCall() {
+  log('call: to its own window');
+  const view = teamsView;
+  closeSettings();
+  teamsWin.contentView.removeChildView(view);
+  const win = callWin = new BaseWindow({ width: 1000, height: 680, show: false, title: t('call.window'), icon: APP_ICON });
+  win.removeMenu();
+  win.contentView.addChildView(view);
+  const fit = () => { const [width, height] = win.getContentSize(); view.setBounds({ x: 0, y: 0, width, height }); };
+  fit();
+  win.on('resize', fit);
+  const page = callPage = view.webContents;
+  // leaving: Teams' own hang-up first, so the others see it at once, then the page goes and its memory with it
+  win.on('close', () => void page.executeJavaScript(`document.getElementById('hangup-button')?.click()`).catch(() => {}) // "Leave", seen in a live call
+    .finally(() => setTimeout(() => page.close(), 1000)));
+  win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } });
+  win.show();
+  newTeamsPage();
+  void serial(() => connect(false)).catch(e => log('call: chats page:', errorText(e)));
 }
 
 // A reaction from Teams' full set, from a toast or an answer card: a small picker window like a menu.
@@ -1148,7 +1192,6 @@ app.whenReady().then(async () => {
   tray = new Tray(image(16, { grey: true }));
   tray.on('click', showTeams);
   createTeamsWindow();
-  teams.attach(teamsPage);
   refreshTray();
   startApi();
   void refreshAi().then(list => { // remind a few days before the Claude Code sign-in runs out

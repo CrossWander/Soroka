@@ -224,8 +224,26 @@ export async function joinMeeting(text: string) {
   await click('[data-tid="chat-join-button"]');
   return true;
 }
-// A call or meeting in progress: its hang-up button. ponytail: the id is a guess until seen in a live call; the app also asks whether the page plays sound
-export const inCall = (): Promise<boolean> => run(() => !!document.querySelector('[data-tid*="hangup" i], [id*="hangup" i]'));
+// A call or meeting in progress: its hang-up button ("Leave" is #hangup-button in a live call; the compact view's one not seen yet)
+export const HANGUP = '[data-tid*="hangup" i], [id*="hangup" i]';
+export const inCall = (): Promise<boolean> => run(s => !!document.querySelector(s), HANGUP);
+// Told at once when a call starts or ends in the page (its hang-up button comes or goes), as the rings are.
+const CALL = 'tbCall';
+export async function watchCall(onChange: (on: boolean) => void) {
+  await bind(CALL, payload => onChange(payload === '1'));
+  await run(([name, sel]) => {
+    const w = window as any;
+    w.__tbCall?.disconnect();
+    const read = () => (document.querySelector(sel) ? '1' : '');
+    let last = read(), timer = 0;
+    if (last) w[name]?.(last);
+    w.__tbCall = new MutationObserver(() => {
+      if (timer) return;
+      timer = window.setTimeout(() => { timer = 0; const now = read(); if (now !== last) { last = now; w[name]?.(now); } }, 300);
+    });
+    w.__tbCall.observe(document.body, { subtree: true, childList: true });
+  }, [CALL, HANGUP]);
+}
 
 export async function findChat(part: string) {
   const hits = (await chatList()).filter(c => c.title.includes(part));
