@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Soroka</title>
+<style>
+  /* "Soroka ▾": a layer over the window under the button; transparent round the card, so its shadow shows */
+  :root { color-scheme: light dark; --bg: #fff; --fg: #242424; --muted: #616161; --line: #e0e0e0; --hover: #f0f0f0; --shadow: rgba(0, 0, 0, .28); }
+  @media (prefers-color-scheme: dark) { :root { --bg: #2b2b2b; --fg: #fff; --muted: #adadad; --line: #3d3d3d; --hover: #3a3a3a; --shadow: rgba(0, 0, 0, .55); } }
+  html, body { margin: 0; background: transparent; }
+  body { width: max-content; padding: 2px 12px 14px 8px; font: 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); user-select: none; }
+  #card { min-width: 240px; max-width: 300px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 18px var(--shadow); padding: 4px; }
+  #chat { padding: 8px 10px 6px; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #chat b { color: var(--fg); }
+  .it { display: flex; align-items: center; gap: 16px; padding: 8px 10px; border-radius: 4px; white-space: nowrap; cursor: default; }
+  .it.on { background: var(--hover); }
+  .it[aria-disabled="true"] { opacity: .45; }
+  kbd { margin-left: auto; font: 11.5px "Segoe UI", system-ui, sans-serif; color: var(--muted); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="card" role="menu"><div id="chat" hidden><span data-i18n="strip.chat"></span> <b></b></div></div>
+<script src="i18n.js"></script>
+<script type="module">
+  await i18n;
+  const card = document.getElementById('card'), head = document.getElementById('chat');
+  const { chat, items } = JSON.parse(new URLSearchParams(location.search).get('m'));
+  head.hidden = !chat; head.title = head.querySelector('b').textContent = chat;
+  const rows = items.map(i => {
+    if (i.line) card.append(document.createElement('hr'));
+    const row = document.createElement('div'), key = document.createElement('kbd');
+    row.className = 'it'; row.role = 'menuitem'; row.ariaDisabled = String(!!i.off); row.title = i.tip;
+    key.textContent = i.key;
+    row.append(i.label, key);
+    row.onclick = () => { if (!i.off) bridge.invoke('menu:act', i.act); };
+    card.append(row);
+    return row;
+  });
+  const live = rows.filter((_, n) => !items[n].off);
+  let at = -1;
+  const mark = n => { at = n; for (const r of rows) r.classList.toggle('on', r === live[n]); };
+  live.forEach((r, n) => (r.onmousemove = () => mark(n)));
+  card.onmouseleave = () => mark(-1);
+  addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (live.length) mark(e.key === 'ArrowDown' ? (at + 1) % live.length : (at <= 0 ? live.length : at) - 1); }
+    else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { e.preventDefault(); live[at].click(); }
+    else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); bridge.invoke('menu:act', ''); }
+  });
+  bridge.invoke('menu:size', document.body.offsetWidth, document.body.offsetHeight);
+</script>
+</body>
+</html>

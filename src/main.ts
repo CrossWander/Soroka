@@ -205,14 +205,16 @@ function refreshTray() {
   pushStrip();
 }
 
-// ---------- the strip above Teams: the chat in view, the AI's actions for it, and what the AI is doing ----------
-const STRIP = 28;
-// the Teams page sits under the strip (from STRIP); the settings cover the strip too (from 0): its chat actions mean nothing over them
+// ---------- the title bar (ui/strip.html): Soroka's menu for the chat in view, what the AI is doing, the answers, the settings ----------
+const STRIP = 32; // Windows' standard title bar
+// the Teams page and the settings sit under it: Windows draws — ☐ ✕ over its right end, in its colours (ui/strip.html --bg, --fg)
 const below = (top: number) => { const [width, height] = teamsWin.getContentSize(); return { x: 0, y: top, width, height: height - top }; };
+const overlay = () => ({ height: STRIP, ...(nativeTheme.shouldUseDarkColors ? { color: '#1f1f1f', symbolColor: '#ffffff' } : { color: '#ebebeb', symbolColor: '#242424' }) });
 let chatInView = '';
+let menuView: WebContentsView | null = null, menuX = 0, menuClosedAt = 0; // "Soroka ▾", below
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
 const stripState = () => ({ chat: chatInView, pending: pending().length, ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
-  note: status === 'ready' ? '' : t(`teams.${status}`) });
+  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView });
 const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); };
 async function working<T>(what: string, fn: () => Promise<T>) {
   activity.push(what); pushStrip();
@@ -234,6 +236,45 @@ function hotkey(e: Electron.Event, i: Electron.Input) {
 }
 ipcMain.handle('strip:get', stripState);
 ipcMain.handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
+
+// "Soroka ▾": the actions for the chat in view. A layer over the window, like the settings: the window stays active and the menu
+// takes the keyboard. A pick, Esc or a click anywhere else closes it.
+const keyOf = (act: string) => Object.keys(HOTKEYS).find(k => HOTKEYS[k] === act)?.replace('Key', '') ?? '';
+function menuItems() {
+  const s = stripState(), noAi = !s.ready || !s.ai, tip = (key: string) => (s.ai ? t(key) : t('ai.needed'));
+  return { chat: s.chat, items: [
+    ...(s.aiOff ? [] : [ // "Do not use AI": the summary stays, without AI
+      { act: 'suggest', label: t('strip.suggest'), off: noAi, tip: tip('strip.suggestTip') },
+      { act: 'improve', label: t('strip.improve'), off: noAi, tip: tip('strip.improveTip') }]),
+    { act: 'summary', label: t('strip.summary'), off: !s.ready, tip: t('strip.summaryTip') }, // without AI it makes the plain one
+    { act: 'refresh', label: t('strip.refresh'), tip: t('strip.refreshTip'), line: true },
+  ].map(i => ({ ...i, key: keyOf(i.act) })) };
+}
+function closeMenu() {
+  const view = menuView;
+  if (!view) return;
+  menuView = null; menuClosedAt = Date.now();
+  teamsWin.contentView.removeChildView(view);
+  view.webContents.close();
+  pushStrip();
+}
+ipcMain.handle('menu:open', (_e, x: number) => {
+  if (menuView) return closeMenu();
+  if (Date.now() - menuClosedAt < 300) return; // this very click took the focus from the menu and closed it: it meant "close"
+  const view = menuView = new WebContentsView({ webPreferences: { preload } });
+  menuX = Math.max(0, Math.round(x) - 8); // the page's margin round the card, for its shadow
+  view.setBackgroundColor('#00000000');
+  view.setBounds({ x: menuX, y: STRIP, width: 0, height: 0 }); // sized once the page has measured itself
+  view.webContents.on('blur', closeMenu);
+  view.webContents.loadFile(ui('menu.html'), { query: { m: JSON.stringify(menuItems()) } });
+  teamsWin.contentView.addChildView(view);
+  pushStrip();
+});
+ipcMain.handle('menu:size', (_e, width: number, height: number) => {
+  menuView?.setBounds({ x: menuX, y: STRIP, width: Math.ceil(width), height: Math.ceil(height) });
+  menuView?.webContents.focus();
+});
+ipcMain.handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPage.focus(); ACTIONS[name]?.(); }); // '' = Esc
 
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
@@ -298,21 +339,26 @@ function createTeamsWindow() {
   const MEDIA = ['media', 'speaker-selection', 'fullscreen'];
   ses.setPermissionRequestHandler((_wc, permission, done, details) =>
     done(MEDIA.includes(permission) && /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//.test(details.requestingUrl)));
-  teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, webPreferences: { preload } });
+  teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
+    webPreferences: { preload } });
   teamsWin.removeMenu();
-  teamsWin.loadFile(ui('strip.html'));
+  teamsWin.loadFile(ui('strip.html'), { query: { icon: APP_ICON_URL } });
+  nativeTheme.on('updated', () => teamsWin.setTitleBarOverlay(overlay()));
+  teamsWin.on('focus', pushStrip);
+  teamsWin.on('blur', pushStrip); // the title bar fades
   teamsWin.on('resize', layout);
   teamsWin.webContents.on('before-input-event', hotkey);
   teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
   // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
   teamsWin.on('hide', () => {
+    closeMenu();
     closeSettings();
     if (status === 'ready') serial(async () => { await restoreChat(); await teams.trimMemory(); trimRam(); }).catch(e => log('park:', errorText(e))); // trimMemory: ~35 MB of a fresh page
   });
   newTeamsPage();
 }
 let teamsView: WebContentsView;
-const layout = () => { teamsView.setBounds(below(STRIP)); settingsView?.setBounds(below(0)); };
+const layout = () => { teamsView.setBounds(below(STRIP)); settingsView?.setBounds(below(STRIP)); };
 // The Teams page of the main window. A call takes it to a window of its own (popOutCall), and a new one comes here.
 function newTeamsPage() {
   const view = teamsView = new WebContentsView({ webPreferences: { session: session.fromPartition('persist:teams'), backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
@@ -483,7 +529,7 @@ function showSettings(welcome = false) {
   showTeams(); // closes one open already: it comes back fresh, at the top
   settingsView = new WebContentsView({ webPreferences: { preload } });
   settingsView.webContents.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
-  settingsView.setBounds(below(0));
+  settingsView.setBounds(below(STRIP));
   teamsWin.contentView.addChildView(settingsView);
   settingsView.webContents.focus();
 }
