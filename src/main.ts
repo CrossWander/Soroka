@@ -250,6 +250,7 @@ function nextToast() {
 }
 const recent: { at: number; title: string; click?: () => void }[] = []; // the last 10 toasts, for the tray menu
 function toast(item: Toast, fromQueue = false) {
+  if (quitting) return; // a card now would open a new window, the quit would wait for it: closing the old card showed the next queued one
   if (!fromQueue) { // a queued one was recorded when it came
     recent.unshift({ at: Date.now(), title: item.title, click: item.click });
     recent.splice(10);
@@ -1136,7 +1137,8 @@ function startApi() {
 // ---------- start ----------
 app.on('second-instance', showTeams);
 app.on('window-all-closed', () => { /* keep running in the tray */ });
-app.on('before-quit', () => { quitting = true; });
+// whatever still holds the quit back after 3 s (twice it was a window: a sign-in popup, a toast opened while closing), it ends anyway
+app.on('before-quit', () => { quitting = true; setTimeout(() => { log('quit held up: exiting'); app.exit(0); }, 3000); });
 // a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray
 app.on('web-contents-created', (_e, wc) => wc.on('will-prevent-unload', e => e.preventDefault()));
 app.whenReady().then(async () => {

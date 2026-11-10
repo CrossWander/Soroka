@@ -1,7 +1,7 @@
 {
   "name": "soroka",
   "productName": "Soroka",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Soroka: Teams notifications, calls, replies and summaries with the AI of your own plan; sends only what you approve",
   "private": true,
   "main": "dist/main.js",
