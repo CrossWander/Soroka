@@ -417,11 +417,16 @@ async function hoverBar(mid: string, sel: string) {
     if (attempt === 3) throw fail(502, 'Teams did not show the message actions');
   }
 }
-// A reaction from Teams' full picker on the other side's latest message. tab: the picker's category with that reaction.
+// A reaction on the other side's latest message: Teams' own quick one from the hover bar when it has it, else from the full
+// picker (tab: the picker's category with that reaction).
+// emoticon id → the hover bar's message-actions-<name>. Teams' quick 👍 "Like" is the emoticon "yes"; the picker's "like"
+// ("Мне нравится") is another thumb, the one that went out instead.
+const QUICK: Record<string, string> = { yes: 'like', heart: 'heart', laugh: 'laugh', surprised: 'surprised' };
 export async function react(c: ChatRef, emoticon: string, tab: number) {
   await openChat(c);
   const m = await theirLast();
   if (!m) throw fail(404, 'no message from the other side in this chat');
+  if (QUICK[emoticon]) { await hoverBar(m.id, `[data-tid="message-actions-${QUICK[emoticon]}"]`); return { chat: c.title, reaction: emoticon }; }
   await hoverBar(m.id, '[data-tid="expanded-reactions-picker-entry"]');
   const button = `[data-tid="emoticon-button-${emoticon}"]`;
   if (!(await exists('[data-tid^="emoji-categories-tab-"]', 5000))) throw fail(502, 'the reactions picker did not open');

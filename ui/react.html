@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https://teams.public.onecdn.static.microsoft; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title data-i18n="react.window">Soroka</title>
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --hover: #ececf8; }
@@ -17,6 +17,8 @@
   button:disabled { opacity: .5; cursor: default; }
   .close { font-size: 18px; line-height: 1; padding: 2px 8px; color: var(--muted); }
   .emoji { font: 22px/1 "Segoe UI Emoji", "Segoe UI", sans-serif; width: 36px; height: 36px; padding: 0; }
+  .emoji img { width: 28px; height: 28px; vertical-align: middle; }
+  #tabs img { width: 20px; height: 20px; vertical-align: middle; }
   #quick { display: flex; flex-wrap: wrap; gap: 2px; padding: 0 10px 6px; border-bottom: 1px solid var(--line); }
   #search { margin: 8px 10px 4px; font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   #tabs { display: flex; gap: 2px; padding: 0 10px 4px; }
@@ -46,17 +48,18 @@
   document.querySelector('.close').onclick = () => window.close();
   const byId = new Map();
   for (const [, tab, items] of REACTIONS) for (const [id, glyph, label] of items) if (!byId.has(id)) byId.set(id, { id, glyph, label, tab });
-  const QUICK = ['like', 'heart', 'laugh', 'surprised', 'sad', 'angry']; // Teams' own quick reactions
-  // Teams draws reactions as images; here they are font glyphs, and an older Windows lacks the newest ones:
-  // a glyph that comes out exactly like a missing character (an empty box), or as two glyphs side by side, is left out.
-  const ctx = Object.assign(document.createElement('canvas'), { width: 28, height: 28 }).getContext('2d', { willReadFrequently: true });
-  ctx.font = '22px "Segoe UI Emoji", "Segoe UI", sans-serif'; ctx.textBaseline = 'top';
-  const pixels = s => { ctx.clearRect(0, 0, 28, 28); ctx.fillText(s, 0, 2); return ctx.getImageData(0, 0, 28, 28).data.join(); };
-  const missing = pixels('\u{10FFFD}'); // a private-use character no font draws
-  const drawable = r => r && (r.ok ??= ctx.measureText(r.glyph).width < 33 && pixels(r.glyph) !== missing);
+  // Teams' quick reactions; its quick 👍 is the emoticon "yes" (the picker's "like" is another thumb)
+  const QUICK = ['yes', 'heart', 'laugh', 'surprised', 'sad', 'angry'];
+  // Teams' own picture of a reaction, by its id, so it looks as in Teams; offline, the font's glyph
+  const picture = r => {
+    const img = Object.assign(document.createElement('img'), { alt: r.glyph, loading: 'lazy',
+      src: `https://teams.public.onecdn.static.microsoft/evergreen-assets/personal-expressions/v2/assets/emoticons/${r.id}/default/30_f.png` });
+    img.onerror = () => img.replaceWith(r.glyph);
+    return img;
+  };
   let busy = false;
   const button = r => {
-    const b = document.createElement('button'); b.className = 'emoji'; b.textContent = r.glyph; b.title = r.label;
+    const b = document.createElement('button'); b.className = 'emoji'; b.append(picture(r)); b.title = r.label;
     b.onclick = async () => {
       if (busy) return;
       busy = true; document.body.style.cursor = 'progress'; $('status').className = ''; $('status').textContent = t('react.busy');
@@ -66,15 +69,15 @@
     };
     return b;
   };
-  $('quick').append(...[...new Set([...QUICK, ...recent])].map(id => byId.get(id)).filter(drawable).slice(0, 18).map(button));
+  $('quick').append(...[...new Set([...QUICK, ...recent])].map(id => byId.get(id)).filter(Boolean).slice(0, 18).map(button));
   // one category at a time: a few hundred buttons, not all 1600
   const show = i => {
     [...$('tabs').children].forEach((b, k) => b.classList.toggle('on', k === i));
-    $('grid').replaceChildren(...REACTIONS[i][2].map(([id]) => byId.get(id)).filter(drawable).map(button));
+    $('grid').replaceChildren(...REACTIONS[i][2].map(([id]) => byId.get(id)).filter(Boolean).map(button));
     $('grid').scrollTop = 0;
   };
   $('tabs').append(...REACTIONS.map(([cat, , items], i) => {
-    const b = document.createElement('button'); b.textContent = items[0][1]; b.title = t(`react.cat.${cat}`); b.onclick = () => { $('search').value = ''; show(i); };
+    const b = document.createElement('button'); b.append(picture(byId.get(items[0][0]))); b.title = t(`react.cat.${cat}`); b.onclick = () => { $('search').value = ''; show(i); };
     return b;
   }));
   // by Teams' label (in its language) or the reaction's id, which is English: "heart", "party"
@@ -82,7 +85,7 @@
     const q = $('search').value.trim().toLowerCase();
     if (!q) return show(0);
     [...$('tabs').children].forEach(b => b.classList.remove('on'));
-    $('grid').replaceChildren(...[...byId.values()].filter(r => (r.label.toLowerCase().includes(q) || r.id.includes(q)) && drawable(r)).slice(0, 300).map(button));
+    $('grid').replaceChildren(...[...byId.values()].filter(r => (r.label.toLowerCase().includes(q) || r.id.includes(q))).slice(0, 300).map(button));
   };
   show(0);
   $('search').focus();

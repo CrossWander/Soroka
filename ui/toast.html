@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data: https://teams.public.onecdn.static.microsoft; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title>Soroka</title>
 <style>
   /* A card in the corner above the clock: slides up, lives a few seconds, stays while the mouse is on it.
@@ -37,7 +37,8 @@
   /* a message card: "Reply", Teams' three quick reactions and "⋯" in one row; "Reply" opens the field above it */
   .row { grid-column: 2 / 4; display: flex; gap: 4px; margin-top: 10px; align-items: center; }
   .row .main { margin-right: 6px; }
-  .emoji { background: transparent; font-size: 16px; padding: 2px 5px; }
+  .emoji { background: transparent; font-size: 16px; padding: 3px 5px; line-height: 0; }
+  .emoji img { width: 20px; height: 20px; } /* Teams' own pictures of its quick reactions, as in its hover bar */
   .emoji:hover { background: var(--btn-hover); }
   .more { margin-left: auto; position: relative; }
   .menu { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; min-width: 210px; padding: 4px; z-index: 1;
@@ -71,7 +72,7 @@
     </div>
     <div class="row" id="row" hidden>
       <button class="main" id="open" data-i18n="act.reply"></button>
-      <button class="emoji" data-react="like">👍</button><button class="emoji" data-react="heart">❤️</button><button class="emoji" data-react="laugh">😆</button>
+      <button class="emoji" data-react="yes"><img alt="👍"></button><button class="emoji" data-react="heart"><img alt="❤️"></button><button class="emoji" data-react="laugh"><img alt="😆"></button>
       <span class="more"><button id="more" data-i18n-title="card.more">⋯</button>
         <span class="menu" id="menu" hidden><button id="m-react" data-i18n="card.reactions"></button><span id="m-actions"></span><button id="m-later" data-i18n="card.later"></button></span></span>
     </div>
@@ -160,6 +161,10 @@
     if (e.key === 'Escape') { replying = false; $('reply').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
   };
   $('reply').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
+  for (const img of document.querySelectorAll('[data-react] img')) { // Teams' picture by the reaction's id; offline, the font's glyph
+    img.onerror = () => img.replaceWith(img.alt);
+    img.src = `https://teams.public.onecdn.static.microsoft/evergreen-assets/personal-expressions/v2/assets/emoticons/${img.parentElement.dataset.react}/default/30_f.png`;
+  }
   for (const b of document.querySelectorAll('[data-react]')) b.onclick = async e => { // Teams' quick reactions, on the other side's latest message
     e.stopPropagation();
     busy(true);
