@@ -133,7 +133,7 @@ function updateSettings(input: Record<string, unknown>) {
     i18n.setLang(settings.language as i18n.Lang);
     for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin) w.webContents.reload();
     settingsView?.webContents.reload(); // layers, not windows
-    panelView?.webContents.reload();
+    for (const page of Object.values(panelPages)) page.webContents.reload();
   }
   refreshTray();
   return settings;
@@ -164,9 +164,11 @@ const serial = <T>(fn: () => Promise<T>): Promise<T> => { const r = chain.then(f
 // ---------- windows & tray ----------
 let teamsWin: BrowserWindow; // its own page is the strip; Teams is the view below it
 let teamsPage: Electron.WebContents;
-let panelView: WebContentsView | null = null; // the answers: a panel on the right of the Teams page
+// the panel on the right of the Teams page: its tabs' pages (ui/drafts.html, ui/summary.html), one on screen at a time
+type Tab = 'drafts' | 'summary';
+const panelPages: Partial<Record<Tab, WebContentsView>> = {};
+let panelTab: Tab | null = null; // null: the panel is closed
 let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
-let summaryWin: BrowserWindow | null = null;
 let tray: Tray;
 let status: 'starting' | 'login' | 'ready' = 'starting';
 let quitting = false;
@@ -215,7 +217,7 @@ let chatInView = '';
 let menuView: WebContentsView | null = null, menuX = 0, menuClosedAt = 0; // "Soroka ▾", below
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
 const stripState = () => ({ chat: chatInView, pending: pending().length, ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
-  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelView });
+  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab });
 const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); };
 async function working<T>(what: string, fn: () => Promise<T>) {
   activity.push(what); pushStrip();
@@ -225,7 +227,7 @@ const ACTIONS: Record<string, () => void> = {
   suggest: () => (aiReady() ? void suggestHere() : explainAi()), // the hotkey works even when the button is greyed out
   summary: () => void summaryHere(),
   improve: () => (aiReady() ? void improveHere() : explainAi()),
-  drafts: () => (panelView ? closePanel() : showDrafts()), // ▤ in the title bar
+  drafts: () => (panelTab ? closePanel() : showDrafts()), // ▤ in the title bar
   refresh: () => void serial(() => connect(false)),
   settings: () => showSettings(),
 };
@@ -361,9 +363,9 @@ function createTeamsWindow() {
 let teamsView: WebContentsView;
 const PANEL = 360;
 const layout = () => {
-  const r = below(STRIP);
-  teamsView.setBounds(panelView ? { ...r, width: r.width - PANEL } : r);
-  panelView?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
+  const r = below(STRIP), side = panelTab && panelPages[panelTab];
+  teamsView.setBounds(side ? { ...r, width: r.width - PANEL } : r);
+  side?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
   settingsView?.setBounds(r);
 };
 // The Teams page of the main window. A call takes it to a window of its own (popOutCall), and a new one comes here.
@@ -520,30 +522,50 @@ const report = () => [
   `Settings: ${settings.language} · ${mode()} · theme ${settings.theme || 'system'} · replies ${modelFor('draftModel') || '-'} · summaries ${modelFor('summaryModel') || '-'}`,
 ].join('\n');
 
-// The answers: a panel on the right of the Teams page, beside it rather than over it (ui/drafts.html). From the tray or a
-// toast (show) it brings the window up too. Closed, its page goes: a renderer less while it is not looked at.
-function showDrafts(show = false) {
-  if (show) showTeams();
-  if (panelView) return panelView.webContents.send('drafts');
-  const view = panelView = new WebContentsView({ webPreferences: { preload } });
-  view.webContents.loadFile(ui('drafts.html'));
-  view.webContents.on('before-input-event', hotkey);
-  teamsWin.contentView.addChildView(view, 1); // above Teams, under the settings and the menu
+// The panel on the right of the Teams page, beside it rather than over it, with two tabs: the answers (ui/drafts.html) and
+// the summary (ui/summary.html). A tab's page lives until the panel closes, so a summary goes on while "Replies" is on
+// screen; closed, the panel's pages go: renderers less while it is not looked at.
+function openPanel(tab: Tab) {
+  let page = panelPages[tab];
+  if (!page) {
+    page = panelPages[tab] = new WebContentsView({ webPreferences: { preload } });
+    page.webContents.loadFile(ui(`${tab}.html`));
+    page.webContents.on('before-input-event', hotkey);
+  }
+  const shown = panelTab && panelPages[panelTab];
+  if (shown !== page) {
+    if (shown) teamsWin.contentView.removeChildView(shown);
+    teamsWin.contentView.addChildView(page, 1); // above Teams, under the settings and the menu
+  }
+  panelTab = tab;
+  layout();
+  pushStrip();
+  return page.webContents;
+}
+function closePanel() {
+  if (!panelTab) return;
+  teamsWin.contentView.removeChildView(panelPages[panelTab]!);
+  for (const tab of Object.keys(panelPages) as Tab[]) {
+    const page = panelPages[tab]!.webContents;
+    delete panelPages[tab];
+    if (tab === 'summary' && !settings.summaryBackground) summaryRuns.get(page.id)?.abort(); // else it goes on and ends with a toast
+    page.close();
+  }
+  panelTab = null;
   layout();
   pushStrip();
 }
-function closePanel() {
-  const view = panelView;
-  if (!view) return;
-  panelView = null;
-  teamsWin.contentView.removeChildView(view);
-  view.webContents.close();
-  layout();
-  pushStrip();
+const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
+ipcMain.handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
+ipcMain.handle('panel:close', () => closePanel());
+// The answers. From the tray or a toast (show) the window comes up too.
+function showDrafts(show = false) {
+  if (show) showTeams();
+  openPanel('drafts').send('drafts');
 }
 function draftsChanged() {
   saveState();
-  panelView?.webContents.send('drafts');
+  toPanel('drafts'); // the answers, and the count on the tab
   refreshTray();
 }
 
@@ -567,22 +589,15 @@ function closeSettings() {
 }
 ipcMain.handle('settings:close', () => closeSettings());
 
-// Opens with the chat picked; the user chooses the period and starts it. With a result: shows a summary made already
-// (the daily digest, or one that went on after its window was closed).
+// The panel's summary tab, with the chat picked; the user chooses the period and starts it. With a result: shows a summary
+// made already (the daily digest, or one that went on after the panel was closed). From the tray or a toast the window comes up.
 type Summary = { text: string; count: number; from: string };
 function showSummary(chatId?: string, result?: Summary) {
-  const preset = { chatId, result };
-  if (summaryWin) { summaryWin.webContents.send('summary:preset', preset); summaryWin.show(); summaryWin.focus(); return; }
-  summaryWin = new BrowserWindow({ width: 640, height: 740, title: t('summary.title'), icon: APP_ICON, autoHideMenuBar: true, webPreferences: { preload } });
-  summaryWin.loadFile(ui('summary.html'));
-  summaryWin.webContents.once('did-finish-load', () => summaryWin?.webContents.send('summary:preset', preset));
-  const page = summaryWin.webContents.id;
-  summaryWin.on('closed', () => { // the run goes on and ends with a toast, unless the user wants closing to stop it
-    if (!settings.summaryBackground) summaryRuns.get(page)?.abort();
-    summaryWin = null;
-  });
+  if (!windowInUse()) showTeams();
+  const page = openPanel('summary'), preset = { chatId, result };
+  if (page.isLoading()) page.once('did-finish-load', () => page.send('summary:preset', preset)); else page.send('summary:preset', preset);
 }
-const summaryRuns = new Map<number, AbortController>(); // per summary window page: the run it started
+const summaryRuns = new Map<number, AbortController>(); // per summary page: the run it started
 // The last summary of each chat is kept, so one that finished unseen can be opened later from the summary window.
 function remember(chatId: string, r: Summary) {
   if (!r.count) return; // "no messages in this period" is not worth keeping
@@ -590,13 +605,13 @@ function remember(chatId: string, r: Summary) {
   for (const [id] of Object.entries(state.summaries).sort(([, a], [, b]) => b.at - a.at).slice(30)) delete state.summaries[id]; // ponytail: 30 chats
   saveState();
 }
-// A summary from the window. Unless the user is looking at that window, the result, or why there is none, comes as a toast.
+// A summary from the panel. Unless the user is looking at its tab, the result, or why there is none, comes as a toast.
 async function windowSummary(page: Electron.WebContents, chatId: string, title: string, period: string, ask: Ask): Promise<Summary> {
-  const id = page.id; // a closed window's page can no longer be asked
+  const id = page.id; // a closed page can no longer be asked
   summaryRuns.get(id)?.abort();
   const run = new AbortController();
   summaryRuns.set(id, run);
-  const unseen = () => page.isDestroyed() || !BrowserWindow.fromWebContents(page)?.isFocused();
+  const unseen = () => page.isDestroyed() || panelTab !== 'summary' || !teamsWin.isFocused();
   const what = ask.question ? 'question' : 'summary';
   try {
     const r = await windowAnswer(chatId, title, period, ask, run.signal);
@@ -624,7 +639,7 @@ async function refreshAi() {
   const fresh = aiInfo.filter(i => i.ready && i.id !== 'claude' && !Object.keys(state.models).some(m => ai.providerOf(m) === i.id)).map(i => i.id);
   if (fresh.length) await checkModels(fresh).catch(e => log('models:', errorText(e)));
   refreshTray();
-  panelView?.webContents.send('drafts'); // the cards enable or grey out "Suggest reply"
+  toPanel('drafts'); // the cards enable or grey out "Suggest reply"
   return aiInfo;
 }
 function explainAi() {
@@ -1182,7 +1197,6 @@ ipcMain.handle('draft:suggest', async (_e, n: string) => { await suggest(n); con
 ipcMain.handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
 ipcMain.handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
 ipcMain.handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; } draftsChanged(); });
-ipcMain.handle('drafts:hide', () => closePanel());
 ipcMain.handle('chats:list', async () => (await serial(teams.chatList)).filter(c => c.type !== 'self').map(({ id, title, type }) => ({ id, title, type })));
 ipcMain.handle('summary:run', (e, chatId: string, title: string, period: string, ask: unknown) => windowSummary(e.sender, String(chatId), String(title), String(period), askFrom(ask)));
 ipcMain.handle('summary:handoff', logged('summary handoff', async (_e: unknown, chatId: string, title: string, period: string, ask: unknown) => {

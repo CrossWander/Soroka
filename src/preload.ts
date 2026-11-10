@@ -2,7 +2,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 const CHANNELS = ['i18n:get', 'settings:get', 'settings:set', 'settings:close', 'status:get', 'ai:login', 'ai:install', 'teams:show', 'teams:check', 'report:copy', 'notify:test', 'style:learn',
-  'drafts:get', 'draft:send', 'draft:suggest', 'draft:open', 'draft:reject', 'draft:snooze', 'drafts:hide', 'react:open', 'react:get', 'react:pick', 'ring:click', 'ring:dismiss', 'ring:size',
+  'drafts:get', 'draft:send', 'draft:suggest', 'draft:open', 'draft:reject', 'draft:snooze', 'panel:tab', 'panel:close','react:open', 'react:get', 'react:pick', 'ring:click', 'ring:dismiss', 'ring:size',
   'chats:list', 'summary:run', 'summary:stop', 'summary:last', 'summary:handoff', 'draft:handoff', 'models:get', 'models:check', 'open:jira', 'toast:size', 'toast:hidden', 'toast:click', 'toast:focus', 'strip:get', 'strip:act', 'menu:open', 'menu:size', 'menu:act'];
 const EVENTS = ['drafts', 'toast', 'summary:preset', 'strip', 'ring'];
 contextBridge.exposeInMainWorld('bridge', {

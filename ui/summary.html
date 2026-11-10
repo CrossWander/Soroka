@@ -7,8 +7,9 @@
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; }
   @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; } }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
-  main { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; height: 100vh; box-sizing: border-box; }
+  /* the panel's "Summary" tab, on the right of the Teams page: its line on the left, its head (ui/panel.js) on top */
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; border-left: 1px solid var(--line); box-sizing: border-box; }
+  main { flex: 1; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   select, button, input { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   #chat, #question { flex: 1; min-width: 220px; }
@@ -32,7 +33,7 @@
   #jira:empty { display: none; }
 </style>
 </head>
-<body>
+<body data-tab="summary">
 <main>
   <div class="row">
     <select id="chat"><option data-i18n="summary.loading"></option></select>
@@ -54,6 +55,7 @@
   <div class="row"><button id="copy" data-i18n="summary.copy" hidden></button></div>
 </main>
 <script src="i18n.js"></script>
+<script src="panel.js"></script>
 <script type="module">
   // The summary is text about Teams messages (the AI's, or picked from them): textContent only.
   const $ = id => document.getElementById(id);
