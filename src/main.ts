@@ -693,6 +693,8 @@ const toneFor = (title: string) => settings.tones.split('\n').map(l => l.split('
   .find(([name]) => title.toLowerCase().includes(name.trim().toLowerCase()))?.slice(1).join(':').trim();
 const variantsRequest = (d: Draft): Request => { notToAi(d.title); return {
   system: `${RULES}\nThe user's style: ${settings.style || t('style.default')}\n`
+    // the manner of this chat, from the user's own lines in it; a tone set for the person still comes last and wins
+    + 'Where "Me" writes in the transcript, write the way they write in this chat (language, formal or informal address, length, emoji) rather than by the general style.\n'
     + (toneFor(d.title) ? `With this person: ${toneFor(d.title)}\n` : '')
     + (d.improve
       ? 'The user wrote the message below for this chat and wants it better. Suggest four versions of it: with spelling and grammar fixed '
