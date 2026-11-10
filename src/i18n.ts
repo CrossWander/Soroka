@@ -168,7 +168,8 @@ const S: Record<string, [string, string, string]> = {
   // answers window
   'drafts.title': ['Сорока — відповіді', 'Soroka — replies', 'Сорока — ответы'],
   'drafts.head': ['Відповіді', 'Replies', 'Ответы'],
-  'drafts.hide': ['Сховати (залишаться в треї)', 'Hide (they stay in the tray)', 'Скрыть (останутся в трее)'],
+  'drafts.hide': ['Сховати панель', 'Hide the panel', 'Скрыть панель'],
+  'drafts.empty': ['Відповідей, що чекають, немає', 'No replies are waiting', 'Ответов, которые ждут, нет'],
   'drafts.hint': ['Без «Надіслати» нічого не йде. Ctrl+Enter — надіслати.', 'Nothing goes out without “Send”. Ctrl+Enter sends.', 'Без «Отправить» ничего не уходит. Ctrl+Enter — отправить.'],
   'drafts.busy': ['ШІ пише варіанти…', 'The AI is writing options…', 'ИИ пишет варианты…'],
   'drafts.suggest': ['✨ Запропонувати', '✨ Suggest', '✨ Предложить'],

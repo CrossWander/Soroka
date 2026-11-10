@@ -17,7 +17,7 @@
   #logo { width: 16px; height: 16px; margin-right: 8px; flex: none; }
   button { app-region: no-drag; font: inherit; color: inherit; background: none; border: 0; border-radius: 4px; display: flex; align-items: center; justify-content: center;
     gap: 6px; white-space: nowrap; cursor: pointer; position: relative; }
-  button:hover:not(:disabled), button[aria-expanded="true"] { background: var(--hover); }
+  button:hover:not(:disabled), button[aria-expanded="true"], button[aria-pressed="true"] { background: var(--hover); }
   button:disabled { opacity: .45; cursor: default; }
   #menu { height: 26px; padding: 0 8px; font-weight: 600; }
   .icon { width: 32px; height: 28px; font-size: 14px; }
@@ -48,7 +48,7 @@
   function show(s) {
     document.body.classList.toggle('inactive', !s.active);
     $('menu').setAttribute('aria-expanded', String(s.menu));
-    $('drafts').disabled = !s.pending;
+    $('drafts').setAttribute('aria-pressed', String(s.panel)); // the panel is open
     const badge = document.createElement('span');
     badge.className = 'badge'; badge.textContent = s.pending > 9 ? '9+' : s.pending;
     $('drafts').replaceChildren('▤', ...(s.pending ? [badge] : []));

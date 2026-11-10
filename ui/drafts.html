@@ -8,13 +8,14 @@
   :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --chip: #ececf8; }
   @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; --chip: #34344a; } }
   html, body { height: 100%; }
-  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; border: 1px solid var(--line); box-sizing: border-box; }
-  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 4px 14px; -webkit-app-region: drag; font-weight: 600; }
-  .bar button { -webkit-app-region: no-drag; }
+  /* a panel on the right of the Teams page: its line on the left, its head with ✕ on top */
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; border-left: 1px solid var(--line); box-sizing: border-box; }
+  .bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 6px 4px 14px; font-weight: 600; }
   .hint { color: var(--muted); font-size: 12px; margin: 0 14px 8px; }
+  .empty { color: var(--muted); text-align: center; margin: 40px 20px; }
   #list { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
   article { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
-  .note { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .note { font-weight: 600; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
   .note a { font-weight: 400; font-size: 12px; color: var(--accent); cursor: pointer; white-space: nowrap; }
   .links { display: flex; gap: 10px; align-items: baseline; }
   select.later { font: 12px "Segoe UI", system-ui, sans-serif; color: var(--accent); background: transparent; border: 0; padding: 0; cursor: pointer; }
@@ -35,9 +36,9 @@
   textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .err { color: var(--error); font-size: 12px; }
   .err:not(:empty) { margin-top: 4px; }
-  footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   footer .react { padding: 5px 8px; }
-  footer .reject { margin-left: auto; }
+  footer .decide { display: flex; gap: 8px; margin-left: auto; } /* "Dismiss" and "Send" wrap together in the narrow panel */
   .quote { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 4px; }
   button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
   button.send { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -48,7 +49,7 @@
 <body>
   <div class="bar"><span data-i18n="drafts.head"></span> <button class="close" data-i18n-title="drafts.hide">×</button></div>
   <p class="hint" data-i18n="drafts.hint"></p>
-  <div id="list"></div>
+  <div id="list"><p class="empty" id="empty" data-i18n="drafts.empty" hidden></p></div>
 <script src="i18n.js"></script>
 <script type="module">
   // Message texts come from Teams and the AI: only textContent / value, never innerHTML.
@@ -98,7 +99,8 @@
     send.onclick = () => act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked));
     reject.onclick = () => act(() => bridge.invoke('draft:reject', d.n));
     area.onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) send.click(); };
-    const foot = el('footer'); foot.append(suggest, react, reject, send);
+    const decide = el('span', 'decide'); decide.append(reject, send);
+    const foot = el('footer'); foot.append(suggest, react, decide);
     box.append(said, jira, variants, busy, area, quoteRow, err, foot);
     box.update = (d, ready, aiOff) => {
       suggest.hidden = handoff.hidden = aiOff; // "Do not use AI": the card is for replying by hand
@@ -122,6 +124,7 @@
   async function render() {
     const [drafts, { ready, aiOff }] = await Promise.all([bridge.invoke('drafts:get'), bridge.invoke('status:get')]);
     const ids = new Set(drafts.map(d => d.n));
+    document.getElementById('empty').hidden = drafts.length > 0;
     for (const [n, box] of cards) if (!ids.has(n)) { box.remove(); cards.delete(n); }
     for (const d of drafts) {
       if (!cards.has(d.n)) { const box = card(d); cards.set(d.n, box); list.append(box); }
