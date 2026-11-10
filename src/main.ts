@@ -374,7 +374,11 @@ function newTeamsPage() {
     chatInView = parts.length > 2 ? parts.slice(1, -1).join(' | ') : '';
     pushStrip();
   });
-  page.setWindowOpenHandler(({ url }) => ({ action: /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? 'allow' : 'deny' }));
+  // Microsoft's sign-in, and links (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so
+  // Microsoft 365 opens signed in. Only web pages: other schemes would start programs.
+  page.setWindowOpenHandler(({ url }) => /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? { action: 'allow' }
+    : /^https?:\/\//.test(url) ? { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true } }
+    : { action: 'deny' });
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
   teams.attach(page);
