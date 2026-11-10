@@ -236,8 +236,9 @@ ipcMain.handle('strip:get', stripState);
 ipcMain.handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
 
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
+// reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
 type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; click?: () => void;
-  actions?: { label: string; run: () => void }[] };
+  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean } };
 let toastWin: BrowserWindow | null = null;
 let toastHandlers: ((() => void) | undefined)[] = [];
 // One card at a time: a newer one waits its turn instead of wiping out the one on screen.
@@ -275,8 +276,10 @@ ipcMain.handle('toast:size', (_e, height: number) => { // the card measured itse
   const { workArea: wa } = screen.getPrimaryDisplay();
   toastWin.setBounds({ width: 392, height: Math.ceil(height), x: wa.x + wa.width - 392, y: wa.y + wa.height - Math.ceil(height) });
   toastWin.setAlwaysOnTop(true, 'pop-up-menu');
-  toastWin.showInactive();
+  if (!toastWin.isVisible()) toastWin.showInactive(); // it also resizes a card on screen (the reply field, the menu): no second show
 });
+// the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
+ipcMain.handle('toast:focus', () => { clearTimeout(toastGuard); toastWin?.setFocusable(true); toastWin?.focus(); });
 // the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
 // and its page drew nothing until shown again, so a card sent to it never came up.
 ipcMain.handle('toast:hidden', () => toastWin?.close());
@@ -809,16 +812,11 @@ function announce(n: string, why?: string) {
   const d = state.drafts[n];
   if (d?.status !== 'pending') return;
   const ready = !!d.variants?.length;
-  toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => showDrafts(true),
+  // the card itself opens the chat; replying, Teams' quick reactions and the rest are in the card (ui/toast.html)
+  toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => openInTeams(d.chatId),
     hint: why ?? (d.error ? t('toast.replyFailed') : ready ? t('toast.replyReady') : undefined),
-    actions: [
-      ...(ready ? [{ label: t('act.reply'), run: () => showDrafts(true) }]
-        : aiReady() ? [{ label: t('act.suggest'), run: () => void suggestThenShow(n) }] : []),
-      { label: t('act.react'), run: () => showReactions(n) },
-      { label: t('act.summary'), run: () => showSummary(d.chatId) },
-      { label: t('act.openChat'), run: () => openInTeams(d.chatId) },
-      { label: t('act.later'), run: () => snooze(n, 60) },
-    ] });
+    reply: { n, variants: d.variants ?? [], ai: aiReady() },
+    actions: [{ label: `📝 ${t('act.summary')}`, run: () => showSummary(d.chatId) }] });
 }
 // ---------- calls and meetings ----------
 // Teams rings in its own page; the app mirrors that toast — who calls, and Teams' own buttons — in a window of its own
@@ -1103,7 +1101,8 @@ ipcMain.handle('react:pick', logged('react', (_e, n: string, id: string, tab: nu
   if (!/^[\w-]{1,80}$/.test(String(id)) || !Number.isInteger(tab) || tab < 1 || tab > 9) throw new Error('bad reaction');
   return react(String(n), String(id), tab);
 }));
-ipcMain.handle('draft:suggest', (_e, n: string) => suggest(n));
+// the variants come back to the caller: a card asks for a snoozed draft too, which the answers list leaves out
+ipcMain.handle('draft:suggest', async (_e, n: string) => { await suggest(n); const d = state.drafts[n]; return { variants: d?.variants ?? [], error: d?.error }; });
 ipcMain.handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
 ipcMain.handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
 ipcMain.handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; } draftsChanged(); });

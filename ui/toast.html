@@ -2,14 +2,17 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title>Soroka</title>
 <style>
-  /* A card in the corner above the clock: slides up, lives a few seconds, stays while the mouse is on it. */
-  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --error: #c4314b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); }
-  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --error: #ff8a9e; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); } }
-  html, body { margin: 0; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); }
-  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 36px 1fr auto; gap: 0 12px; align-items: start;
+  /* A card in the corner above the clock: slides up, lives a few seconds, stays while the mouse is on it.
+     The window grows upward for the "⋯" menu, so the card sits at the bottom of the page. */
+  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --on-accent: #ffffff; --error: #c4314b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); --field: #f5f5f5; --menu: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --on-accent: #16171d; --error: #ff8a9e; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); --field: #1f1f1f; --menu: #323232; } }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); }
+  body { display: flex; flex-direction: column; justify-content: flex-end; }
+  [hidden] { display: none !important; }
+  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 36px 1fr auto; gap: 0 12px; align-items: start; position: relative;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.28); cursor: pointer;
     opacity: 0; transform: translateY(110%); transition: opacity .38s cubic-bezier(.215,.61,.355,1), transform .38s cubic-bezier(.215,.61,.355,1); }
   .card.shown { opacity: 1; transform: none; }
@@ -19,13 +22,33 @@
   .title.accent { color: var(--accent); } .title.error { color: var(--error); }
   .message { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .hint.error { color: var(--error); }
   .hint:empty, .actions:empty { display: none; }
   .actions { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .actions button { font: inherit; font-size: 13px; padding: 4px 10px; border: 0; border-radius: 6px; background: var(--btn); color: var(--fg); cursor: pointer; }
-  .actions button:first-child { background: var(--accent); color: #fff; }
-  .actions button:hover { background: var(--btn-hover); } .actions button:first-child:hover { filter: brightness(1.1); background: var(--accent); }
-  .close { border: 0; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; cursor: pointer; }
+  button { font: inherit; font-size: 13px; border: 0; border-radius: 6px; color: var(--fg); cursor: pointer; }
+  .actions button, .main, .more > button { padding: 4px 10px; background: var(--btn); }
+  .actions button:first-child, .main { background: var(--accent); color: var(--on-accent); }
+  .actions button:hover, .more > button:hover { background: var(--btn-hover); }
+  .actions button:first-child:hover, .main:hover { filter: brightness(1.1); background: var(--accent); }
+  button:disabled { opacity: .6; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .close { background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; }
   .close:hover { color: var(--fg); }
+  /* a message card: "Reply", Teams' three quick reactions and "⋯" in one row; "Reply" opens the field above it */
+  .row { grid-column: 2 / 4; display: flex; gap: 4px; margin-top: 10px; align-items: center; }
+  .row .main { margin-right: 6px; }
+  .emoji { background: transparent; font-size: 16px; padding: 2px 5px; }
+  .emoji:hover { background: var(--btn-hover); }
+  .more { margin-left: auto; position: relative; }
+  .menu { position: absolute; right: 0; bottom: calc(100% + 6px); display: grid; min-width: 210px; padding: 4px; z-index: 1;
+    background: var(--menu); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+  .menu button { background: transparent; text-align: left; padding: 6px 10px; white-space: nowrap; }
+  .menu button:hover { background: var(--btn-hover); }
+  .reply { grid-column: 2 / 4; display: flex; gap: 6px; margin-top: 10px; cursor: default; }
+  .reply input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--fg); }
+  .tool { width: 30px; background: var(--btn); font-size: 14px; }
+  .tool:hover { background: var(--btn-hover); }
+  .send { width: 32px; background: var(--accent); color: var(--on-accent); }
 </style>
 </head>
 <body>
@@ -34,44 +57,116 @@
     <div><div class="title" id="title"></div><div class="message" id="message"></div><div class="hint" id="hint"></div></div>
     <button class="close" id="close">✕</button>
     <div class="actions" id="actions"></div>
+    <div class="reply" id="reply" hidden>
+      <input id="field" data-i18n-placeholder="card.field">
+      <button class="tool" id="ai" data-i18n-title="card.ai">✨</button>
+      <button class="send" id="send" data-i18n-title="card.send">➤</button>
+    </div>
+    <div class="row" id="row" hidden>
+      <button class="main" id="open" data-i18n="act.reply"></button>
+      <button class="emoji" data-react="like">👍</button><button class="emoji" data-react="heart">❤️</button><button class="emoji" data-react="laugh">😆</button>
+      <span class="more"><button id="more" data-i18n-title="card.more">⋯</button>
+        <span class="menu" id="menu" hidden><button id="m-react" data-i18n="card.reactions"></button><span id="m-actions"></span><button id="m-later" data-i18n="card.later"></button></span></span>
+    </div>
   </div>
+<script src="i18n.js"></script>
 <script>
   // Texts come from Teams: textContent only.
-  const card = document.getElementById('card');
-  let life = 4000, timer, leaving;
-  const arm = () => { clearTimeout(timer); timer = setTimeout(leave, life); };
+  const $ = id => document.getElementById(id);
+  const card = $('card');
+  let life = 4000, timer, leaving, n = null, replying = false, variants = [], next = 0;
+  const arm = () => { clearTimeout(timer); if (!replying) timer = setTimeout(leave, life); };
   function leave() {
     clearTimeout(timer);
     card.classList.add('leaving'); card.classList.remove('shown');
     leaving = setTimeout(() => bridge.invoke('toast:hidden'), 230);
   }
   const act = i => { clearTimeout(timer); card.classList.remove('shown'); bridge.invoke('toast:click', i); }; // -1 = the card itself
-  bridge.on('toast', t => {
+  // the window fits the card, and the open menu above it
+  const fit = () => bridge.invoke('toast:size', card.offsetHeight + 32 + ($('menu').hidden ? 0 : $('menu').offsetHeight + 6));
+  const say = (text, error) => { $('hint').textContent = text; $('hint').classList.toggle('error', !!error); return fit(); };
+  const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button')) b.disabled = on; };
+
+  bridge.on('toast', async t => {
+    await i18n;
     clearTimeout(leaving);
-    document.getElementById('icon').src = t.icon;
-    const title = document.getElementById('title');
-    title.textContent = t.title; title.className = 'title ' + (t.tone || '');
-    document.getElementById('message').textContent = t.message || '';
-    document.getElementById('hint').textContent = t.hint || '';
-    document.getElementById('close').title = t.closeLabel;
-    document.getElementById('actions').replaceChildren(...t.actions.map((label, i) => {
+    $('icon').src = t.icon;
+    $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
+    $('message').textContent = t.message || '';
+    say(t.hint || '');
+    $('close').title = t.closeLabel;
+    n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false;
+    $('row').hidden = !n; $('reply').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
+    $('ai').hidden = !t.reply?.ai;
+    const buttons = t.actions.map((label, i) => { // a message card puts them in its "⋯" menu
       const b = document.createElement('button');
       b.textContent = label;
       b.onclick = e => { e.stopPropagation(); act(i); };
       return b;
-    }));
+    });
+    (n ? $('m-actions') : $('actions')).replaceChildren(...buttons);
+    if (n) $('actions').replaceChildren();
     life = t.life;
     card.classList.remove('shown', 'leaving');
     requestAnimationFrame(async () => {
-      await bridge.invoke('toast:size', card.offsetHeight + 32); // + margins left for the shadow; the slide transform doesn't count
+      await fit(); // + margins left for the shadow; the slide transform doesn't count
       requestAnimationFrame(() => card.classList.add('shown'));
       arm();
     });
   });
+
+  // ---- a message card ----
+  $('open').onclick = async e => { // the field opens in the card: the card stays and takes the keyboard
+    e.stopPropagation();
+    replying = true; clearTimeout(timer);
+    $('open').hidden = true; $('reply').hidden = false;
+    if (variants.length && !$('field').value) $('field').value = variants[next++ % variants.length]; // already made: drafts mode
+    await bridge.invoke('toast:focus');
+    await fit();
+    $('field').focus();
+  };
+  $('ai').onclick = async e => { // the AI's variant into the field, to edit before sending; again: the next one
+    e.stopPropagation();
+    if (!variants.length) {
+      busy(true); $('ai').textContent = '…';
+      try {
+        const d = await bridge.invoke('draft:suggest', n);
+        variants = d.variants;
+        if (d.error) say(d.error, true);
+      } catch (err) { say(failed(err), true); }
+      finally { busy(false); $('ai').textContent = '✨'; }
+    }
+    if (variants.length) $('field').value = variants[next++ % variants.length];
+    $('field').focus();
+  };
+  async function send() {
+    const text = $('field').value.trim();
+    if (!text) return $('field').focus();
+    busy(true);
+    try { await bridge.invoke('draft:send', n, text, false); leave(); }
+    catch (err) { busy(false); say(failed(err), true); }
+  }
+  $('send').onclick = e => { e.stopPropagation(); send(); };
+  $('field').onkeydown = e => {
+    if (e.key === 'Enter') send();
+    if (e.key === 'Escape') { replying = false; $('reply').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
+  };
+  $('reply').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
+  for (const b of document.querySelectorAll('[data-react]')) b.onclick = async e => { // Teams' quick reactions, on the other side's latest message
+    e.stopPropagation();
+    busy(true);
+    try { await bridge.invoke('react:pick', n, b.dataset.react, 1); leave(); }
+    catch (err) { busy(false); say(failed(err), true); }
+  };
+  $('more').onclick = e => { e.stopPropagation(); $('menu').hidden = !$('menu').hidden; clearTimeout(timer); fit(); };
+  $('m-react').onclick = e => { e.stopPropagation(); bridge.invoke('react:open', n); leave(); };
+  $('m-later').onclick = e => { e.stopPropagation(); bridge.invoke('draft:snooze', n, 60); leave(); };
+
   card.onmouseenter = () => clearTimeout(timer); // the user is reading or reaching for it
-  card.onmouseleave = arm;
+  card.onmouseleave = () => { if ($('menu').hidden) arm(); };
   card.onclick = () => act(-1);
-  document.getElementById('close').onclick = e => { e.stopPropagation(); leave(); };
+  $('close').onclick = e => { e.stopPropagation(); leave(); };
 </script>
 </body>
 </html>
