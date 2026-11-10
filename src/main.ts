@@ -36,20 +36,22 @@ const errorText = (e: unknown) => (e as Error).message;
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
+  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
 const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-haiku-5-5'];
 // wakeMode: what the AI does with a new message; the notification itself always comes
 // remindAfter: minutes a personal message may wait for an answer before a reminder; '' = never
+// followUpAfter: the same for the user's own question that nobody answered
 // webChat: the site "Open in AI chat" opens; '' = the one of the model's provider, else claude.ai
-const OPTIONS: Record<string, unknown[]> = { wakeMode: ['notify', 'drafts', 'monitor'], language: i18n.LANGS, remindAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'],
+const OPTIONS: Record<string, unknown[]> = { wakeMode: ['notify', 'drafts', 'monitor'], language: i18n.LANGS, remindAfter: ['', '60', '240', '1440'],
+  followUpAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'],
   webChat: ['', ...Object.keys(ai.WEB)] };
 const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
+  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
@@ -100,13 +102,16 @@ if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify';
 // incoming: made for a message to the user (not by "Suggest reply" on any chat); remindAt: snoozed until then;
 // reminded: the "still waiting for your answer" reminder went out; answered: the user replied in Teams itself; read: read it there;
 // improve: "Improve my text" — `last` is the user's own unsent text from the compose box, and sending replaces it
+// nudge: a reminder about the user's own question nobody answered (`last`); it closes when an answer comes
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
-  context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean };
+  context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean;
+  nudge?: boolean };
 // seen: per chat, the last message announced ("time|preview"); models: last result of "Check models"; digestDay: date of the last daily digest
 const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string, Draft>, seen: {} as Record<string, string>,
   models: {} as Record<string, string>, digestDay: '', summaries: {} as Record<string, Summary & { at: number }>, // summaries: the last one per chat
   spent: { day: '', tokens: 0 }, // spent: Claude's tokens today, as Claude Code reports them
   activitySeen: [] as string[], reactions: [] as string[], // activitySeen: Activity items already looked at; reactions: the user's recent ones
+  asked: {} as Record<string, { title: string; text: string; at: number; told?: boolean }>, // asked: per chat, the user's own question still unanswered
   checkWarned: '' }); // checkWarned: "version|missing parts" the self-check last warned about
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
@@ -690,10 +695,14 @@ const variantsRequest = (d: Draft): Request => { notToAi(d.title); return {
       ? 'The user wrote the message below for this chat and wants it better. Suggest four versions of it: with spelling and grammar fixed '
         + 'and clearer, in the same tone; shorter; more polite and formal; translated into English (into Ukrainian if it is in English already). '
         + 'Keep its meaning and add nothing. Return only a JSON array of four strings, no explanations.'
+      : d.nudge
+      ? 'The user\'s last message in this chat is a question that has had no answer for hours. Suggest three short, polite reminders about it: '
+        + 'neutral; warmer, with a light touch; brief and direct. Do not repeat the question word for word. '
+        + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.'
       : 'Suggest three replies to the latest message addressed to the user: short; more detailed; lighter, with humour. '
         + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.'),
   prompt: `Chat: ${d.title}\nTranscript:\n<<<\n${(d.context ?? []).join('\n')}\n>>>`
-    + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : ''),
+    + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.nudge ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : ''),
 }; };
 // For people without an AI program, or past its limits: the request goes to the clipboard and their AI's chat site
 // opens (the one in the settings, else the model's); they paste it.
@@ -1057,18 +1066,48 @@ function remind() {
       d.reminded = true; saveState(); announce(n, t('toast.awaiting'));
     }
   }
+  for (const [id, a] of Object.entries(state.asked)) {
+    if (a.told || !settings.followUpAfter || Date.now() - a.at < Number(settings.followUpAfter) * 60_000) continue;
+    a.told = true; saveState(); // once per question
+    toast({ title: t('toast.noAnswer', { title: a.title }), message: a.text, tone: 'accent', long: true, click: () => openInTeams(id),
+      actions: [{ label: t('act.nudge'), run: () => void nudge(id).catch(e => log('nudge:', errorText(e))) }] });
+  }
+}
+// "Nudge": a card in "Replies" with a ready reminder, and the AI's versions of it when there is an AI; the user sends it.
+async function nudge(chatId: string) {
+  const a = state.asked[chatId];
+  if (!a) return;
+  const n = waiting().find(([, d]) => d.chatId === chatId && d.nudge)?.[0]
+    ?? addDraft({ chatId, title: a.title, note: t('drafts.nudgeNote', { title: a.title }), last: a.text, text: t('drafts.nudgeText'), nudge: true });
+  if (aiReady() && !aiSkipped(a.title)) await suggestThenShow(n); else showDrafts(true);
 }
 // ponytail: Teams writes the user's own last message as "Вы: …" / "Ви: …" / "You: …" (ru/uk/en UI); other languages are not caught
 const MINE = /^(Вы|Ви|You): /;
+// The user's own questions: the chat's last message is theirs and asks something. Kept until an answer comes; only from
+// today, so the first run does not bring up old ones. ponytail: a question mark in the preview Teams cuts; a long question may lose it.
+function trackQuestions(chats: teams.Chat[]) {
+  const today = /^\d{1,2}:\d{2}$/, before = JSON.stringify(state.asked);
+  for (const c of chats) {
+    const q = (c.type === 'direct' || c.type === 'group') && !named(c, settings.muteFrom) && MINE.test(c.preview) && c.preview.includes('?')
+      ? c.preview.replace(MINE, '') : '';
+    if (!q) { delete state.asked[c.id]; continue; } // answered, or the user's last word asks nothing
+    if (state.asked[c.id]?.text === q || !today.test(c.time)) continue;
+    const [h, m] = c.time.split(':').map(Number);
+    state.asked[c.id] = { title: c.title, text: q, at: new Date().setHours(h, m, 0, 0) };
+  }
+  for (const [id, a] of Object.entries(state.asked)) if (Date.now() - a.at > 7 * 86_400_000) delete state.asked[id]; // a chat gone from the list
+  if (JSON.stringify(state.asked) !== before) saveState();
+}
 // A message's card is done when the user answered in Teams itself (their message is now the chat's last one), or read
 // the chat without asking the app for anything on it: no reply variants asked for or failing, not snoozed.
 // In drafts mode the app reads the chat itself, but its card has the variants (or their error) by then.
 function closeAnswered(chats: teams.Chat[]) {
   let changed = false;
   for (const [, d] of waiting()) {
-    const c = d.incoming && chats.find(x => x.id === d.chatId); // "Suggest reply" may be asked on a chat the user wrote last
+    const c = (d.incoming || d.nudge) && chats.find(x => x.id === d.chatId); // "Suggest reply" may be asked on a chat the user wrote last
     if (!c) continue;
-    if (MINE.test(c.preview)) d.status = 'answered';
+    if (d.nudge) { if (MINE.test(c.preview)) continue; d.status = 'answered'; } // the other side answered the question
+    else if (MINE.test(c.preview)) d.status = 'answered';
     else if (!c.unread && !d.variants?.length && !d.busy && !d.error && !d.remindAt) d.status = 'read';
     else continue;
     delete d.context; changed = true;
@@ -1082,6 +1121,7 @@ async function scan() {
   const found: string[] = [];
   const chats = await teams.chatList();
   closeAnswered(chats);
+  trackQuestions(chats);
   for (const c of chats.filter(wanted).slice(0, 5)) {
     const key = `${c.time}|${c.preview}`;
     if (state.seen[c.id] === key) continue;

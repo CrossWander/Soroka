@@ -85,7 +85,7 @@
     react.onclick = () => bridge.invoke('react:open', d.n);
     const quote = el('input'); quote.type = 'checkbox'; // "Reply with quote" to the other side's latest message
     const quoteRow = el('label', 'quote'); quoteRow.append(quote, t('drafts.quote'));
-    react.hidden = quoteRow.hidden = !!d.improve; // "Improve my text" answers no one
+    react.hidden = quoteRow.hidden = !!(d.improve || d.nudge); // "Improve my text" answers no one; a nudge follows the user's own question
     const reject = el('button', 'reject', t('drafts.reject'));
     const send = el('button', 'send', t('drafts.send'));
     const act = async fn => {
