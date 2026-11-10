@@ -438,7 +438,7 @@ export async function send(c: ChatRef, text: string, { replace, quote }: { repla
   await click(BOX);
   const had = plain(await boxText());
   if (had !== plain(replace ?? '') || (!replace && await boxQuote()))
-    throw fail(409, replace ? 'the text in the compose box has changed, not sent' : 'the compose box has your unsent text, not sent');
+    throw Object.assign(fail(409, replace ? 'the text in the compose box has changed, not sent' : 'the compose box has your unsent text, not sent'), { boxTaken: !replace });
   if (replace) await clearBox();
   if (quote) {
     const m = await theirLast();

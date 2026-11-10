@@ -1120,9 +1120,10 @@ async function sendDraft(n: string, text: string, quote = false) {
     delete d.error; delete d.context;
     toast({ title: t('toast.sent'), message: `${d.title}: ${text}` });
   } catch (e) {
-    d.error = errorText(e);
+    const err = (e as { boxTaken?: boolean }).boxTaken ? new Error(t('err.boxTaken')) : e; // the user's own words wait there: in their language
+    d.error = errorText(err);
     toast({ title: t('toast.notSent'), message: `${d.title}: ${d.error}`, tone: 'error', long: true, click: () => showDrafts(true) });
-    throw e;
+    throw err;
   } finally { draftsChanged(); }
 }
 

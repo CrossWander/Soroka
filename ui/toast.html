@@ -49,6 +49,13 @@
   .tool { width: 30px; background: var(--btn); font-size: 14px; }
   .tool:hover { background: var(--btn-hover); }
   .send { width: 32px; background: var(--accent); color: var(--on-accent); }
+  /* the AI writing or the message going out: the button turns into a spinning ring */
+  .spin { color: transparent; position: relative; }
+  .spin::after { content: ''; position: absolute; inset: 0; margin: auto; width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box;
+    border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  .send.spin::after { border-color: color-mix(in srgb, var(--on-accent) 30%, transparent); border-top-color: var(--on-accent); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin::after { animation-duration: 3s; } }
 </style>
 </head>
 <body>
@@ -129,13 +136,13 @@
   $('ai').onclick = async e => { // the AI's variant into the field, to edit before sending; again: the next one
     e.stopPropagation();
     if (!variants.length) {
-      busy(true); $('ai').textContent = '…';
+      busy(true); $('ai').classList.add('spin'); say(t('card.thinking'));
       try {
         const d = await bridge.invoke('draft:suggest', n);
         variants = d.variants;
-        if (d.error) say(d.error, true);
+        say(d.error || '', !!d.error);
       } catch (err) { say(failed(err), true); }
-      finally { busy(false); $('ai').textContent = '✨'; }
+      finally { busy(false); $('ai').classList.remove('spin'); }
     }
     if (variants.length) $('field').value = variants[next++ % variants.length];
     $('field').focus();
@@ -143,9 +150,9 @@
   async function send() {
     const text = $('field').value.trim();
     if (!text) return $('field').focus();
-    busy(true);
+    busy(true); $('send').classList.add('spin'); say(t('card.sending'));
     try { await bridge.invoke('draft:send', n, text, false); leave(); }
-    catch (err) { busy(false); say(failed(err), true); }
+    catch (err) { busy(false); $('send').classList.remove('spin'); say(failed(err), true); }
   }
   $('send').onclick = e => { e.stopPropagation(); send(); };
   $('field').onkeydown = e => {
