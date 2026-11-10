@@ -51,5 +51,8 @@
     "copyright": "© 2026 Pavlo Dykalo"
   },
   "author": "Pavlo Dykalo",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "koffi": "^3.3.7"
+  }
 }

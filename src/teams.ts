@@ -244,6 +244,8 @@ export async function watchCall(onChange: (on: boolean) => void) {
     w.__tbCall.observe(document.body, { subtree: true, childList: true });
   }, [CALL, HANGUP]);
 }
+// Chromium's "memory is short" pass and a full garbage collection: the page drops what it can rebuild.
+export const trimMemory = () => cdp('Memory.simulatePressureNotification', { level: 'critical' }).then(() => cdp('HeapProfiler.collectGarbage'));
 
 export async function findChat(part: string) {
   const hits = (await chatList()).filter(c => c.title.includes(part));

@@ -277,11 +277,12 @@ ipcMain.handle('toast:size', (_e, height: number) => { // the card measured itse
   toastWin.setAlwaysOnTop(true, 'pop-up-menu');
   toastWin.showInactive();
 });
-ipcMain.handle('toast:hidden', () => { toastWin?.hide(); nextToast(); });
+// the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
+// and its page drew nothing until shown again, so a card sent to it never came up.
+ipcMain.handle('toast:hidden', () => toastWin?.close());
 ipcMain.handle('toast:click', (_e, action: number) => { // -1 = the card itself
-  toastWin?.hide();
   const run = toastHandlers[action + 1];
-  nextToast();
+  toastWin?.close();
   run?.();
 });
 
@@ -301,7 +302,10 @@ function createTeamsWindow() {
   teamsWin.webContents.on('before-input-event', hotkey);
   teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
   // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
-  teamsWin.on('hide', () => { closeSettings(); if (status === 'ready') serial(() => restoreChat()).catch(e => log('park:', errorText(e))); });
+  teamsWin.on('hide', () => {
+    closeSettings();
+    if (status === 'ready') serial(async () => { await restoreChat(); await teams.trimMemory(); trimRam(); }).catch(e => log('park:', errorText(e))); // trimMemory: ~35 MB of a fresh page
+  });
   newTeamsPage();
 }
 let teamsView: WebContentsView;
@@ -347,6 +351,23 @@ const calling = async () => !!ring || teamsPage.isCurrentlyAudible() || await te
 let loadedAt = 0;
 const openInTeams = (chatId: string) => { showTeams(); void serial(() => teams.openChat({ id: chatId, title: chatId })).catch(e => log('open chat:', errorText(e))); };
 const windowInUse = () => teamsWin.isVisible() && !teamsWin.isMinimized();
+// What a hidden Soroka does not touch leaves RAM for the page file, as the Teams app does in the background (Windows only):
+// measured 1.6 GB of RAM down to ~150 MB, growing back slowly; the window opens a moment slower after. Never during a call.
+let emptyWorkingSet: ((pid: number) => void) | null | undefined, trimmedAt = 0;
+function trimRam() {
+  if (process.platform !== 'win32' || callWin || ring) return;
+  if (emptyWorkingSet === undefined) try {
+    const k32 = (require('koffi') as typeof import('koffi')).load('kernel32.dll');
+    const open = k32.func('void *__stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
+    const empty = k32.func('bool __stdcall K32EmptyWorkingSet(void *process)'), close = k32.func('bool __stdcall CloseHandle(void *handle)');
+    emptyWorkingSet = pid => { const h = open(0x0500, false, pid); if (h) { empty(h); close(h); } }; // PROCESS_SET_QUOTA | PROCESS_QUERY_INFORMATION
+  } catch (e) { emptyWorkingSet = null; log('trim:', errorText(e)); }
+  const ram = () => Math.round(app.getAppMetrics().reduce((s, m) => s + m.memory.workingSetSize, 0) / 1024); // MB
+  const before = ram();
+  for (const m of app.getAppMetrics()) emptyWorkingSet?.(m.pid);
+  trimmedAt = Date.now();
+  log(`trim: RAM ${before} → ${ram()} MB`); // a complaint about memory can be traced
+}
 // After the app opened chats itself: give the user back their chat, or park a hidden window on the self-chat,
 // where nothing new arrives unseen (a new message in the chat left open would be read silently).
 async function restoreChat(before?: string) {
@@ -1003,6 +1024,7 @@ async function tick() {
       if (!quiet()) announce(n); // in quiet hours the card waits in the tray
     }
     await checkActivity();
+    if (!windowInUse() && Date.now() - trimmedAt > 10 * 60_000) trimRam(); // what the work since brought back
   } catch (e) { log('tick:', errorText(e)); }
   finally { ticking = false; if (again) { again = false; void tick(); } }
 }
