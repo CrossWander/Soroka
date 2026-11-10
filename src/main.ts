@@ -132,6 +132,7 @@ function updateSettings(input: Record<string, unknown>) {
   if (settings.language !== old.language) { // every window of the app redraws in the new language
     i18n.setLang(settings.language as i18n.Lang);
     for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin) w.webContents.reload();
+    settingsView?.webContents.reload(); // a layer, not a window
   }
   refreshTray();
   return settings;
@@ -163,7 +164,7 @@ const serial = <T>(fn: () => Promise<T>): Promise<T> => { const r = chain.then(f
 let teamsWin: BrowserWindow; // its own page is the strip; Teams is the view below it
 let teamsPage: Electron.WebContents;
 let draftsWin: BrowserWindow | null = null;
-let settingsWin: BrowserWindow | null = null;
+let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
 let summaryWin: BrowserWindow | null = null;
 let tray: Tray;
 let status: 'starting' | 'login' | 'ready' = 'starting';
@@ -206,6 +207,8 @@ function refreshTray() {
 
 // ---------- the strip above Teams: the chat in view, the AI's actions for it, and what the AI is doing ----------
 const STRIP = 28;
+// the Teams page sits under the strip (from STRIP); the settings cover the strip too (from 0): its chat actions mean nothing over them
+const below = (top: number) => { const [width, height] = teamsWin.getContentSize(); return { x: 0, y: top, width, height: height - top }; };
 let chatInView = '';
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
 const stripState = () => ({ chat: chatInView, pending: pending().length, ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
@@ -296,7 +299,7 @@ function createTeamsWindow() {
   const view = new WebContentsView({ webPreferences: { session: ses, backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
   teamsWin.contentView.addChildView(view);
   teamsPage = view.webContents;
-  const layout = () => { const [width, height] = teamsWin.getContentSize(); view.setBounds({ x: 0, y: STRIP, width, height: height - STRIP }); };
+  const layout = () => { view.setBounds(below(STRIP)); settingsView?.setBounds(below(0)); };
   layout();
   teamsWin.on('resize', layout);
   for (const wc of [teamsPage, teamsWin.webContents]) wc.on('before-input-event', hotkey);
@@ -309,7 +312,7 @@ function createTeamsWindow() {
   teamsPage.setWindowOpenHandler(({ url }) => ({ action: /^https:\/\/login\.(microsoftonline|live)\.com\//.test(url) ? 'allow' : 'deny' }));
   teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
   // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
-  teamsWin.on('hide', () => { if (status === 'ready') serial(() => restoreChat()).catch(e => log('park:', errorText(e))); });
+  teamsWin.on('hide', () => { closeSettings(); if (status === 'ready') serial(() => restoreChat()).catch(e => log('park:', errorText(e))); });
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   teamsPage.on('did-finish-load', () => { if (status === 'ready') void watch(); });
 }
@@ -320,6 +323,7 @@ const watch = () => Promise.all([
 ]).catch(e => log('watch:', errorText(e)));
 // One click on the tray icon: the Teams window, as in the Teams app.
 function showTeams() {
+  closeSettings(); // every way here (the tray, a toast, a sign-in, "Open" in the settings) wants the Teams page itself
   if (teamsWin.isMinimized()) teamsWin.restore();
   teamsWin.show();
   teamsWin.focus();
@@ -439,22 +443,25 @@ function draftsChanged() {
   refreshTray();
 }
 
+// The settings cover the Teams window; the page lays its sections out in as many columns as fit.
 function showSettings(welcome = false) {
-  if (settingsWin) { settingsWin.show(); settingsWin.focus(); return; }
-  // wide rather than tall: the page lays its sections out in as many columns as fit (four on a usual screen)
-  settingsWin = new BrowserWindow({ width: Math.min(1480, screen.getPrimaryDisplay().workArea.width - 40), height: 560, useContentSize: true, resizable: false, maximizable: false, show: false,
-    title: t('set.title'), icon: APP_ICON, autoHideMenuBar: true, webPreferences: { preload } });
-  settingsWin.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
-  settingsWin.on('closed', () => (settingsWin = null));
+  showTeams(); // closes one open already: it comes back fresh, at the top
+  settingsView = new WebContentsView({ webPreferences: { preload } });
+  settingsView.webContents.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
+  settingsView.setBounds(below(0));
+  teamsWin.contentView.addChildView(settingsView);
+  settingsView.webContents.focus();
 }
-// The settings page measures itself, so the window fits it without scrolling.
-ipcMain.handle('window:fit', (e, height: number) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (!win) return;
-  const first = !win.isVisible();
-  win.setContentSize(win.getContentSize()[0], Math.min(Math.ceil(height), screen.getPrimaryDisplay().workArea.height - 60));
-  if (first) { win.center(); win.show(); }
-});
+function closeSettings() {
+  const view = settingsView;
+  if (!view) return;
+  settingsView = null;
+  teamsWin.contentView.removeChildView(view);
+  teamsPage.focus();
+  // a text field saves when it loses focus: let the one being typed in save, then close the page
+  void view.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {}).finally(() => view.webContents.close());
+}
+ipcMain.handle('settings:close', () => closeSettings());
 
 // Opens with the chat picked; the user chooses the period and starts it. With a result: shows a summary made already
 // (the daily digest, or one that went on after its window was closed).
@@ -1149,8 +1156,8 @@ app.whenReady().then(async () => {
       toast({ title: t('toast.expires'), message: t('toast.until', { date: new Date(Date.parse(c.expiresAt!)).toLocaleString(i18n.current().locale) }), long: true,
         actions: [{ label: t('act.renew'), run: () => ai.login('claude') }] });
   });
-  if (firstRun) showSettings(true);
   await serial(() => connect(true));
+  if (firstRun) showSettings(true); // after the sign-in: over the Teams page they would hide its sign-in form
   startTimer();
   const count = pending().length;
   if (count) toast({ title: t('toast.waiting', { n: count }), message: t('toast.leftOver'), long: true, click: () => showDrafts(true) });

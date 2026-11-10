@@ -9,6 +9,10 @@
   @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3a3a38; --accent: #8f95ff; --ok: #6ccb5f; --warn: #ff8a9e; } }
   body { margin: 0; overflow-y: auto; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
   main { padding: 14px 18px 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  #close { border: 0; font-size: 15px; padding: 2px 8px; color: var(--muted); }
+  #close:hover { color: var(--fg); background: var(--line); }
   .welcome { border-left: 3px solid var(--accent); padding: 2px 10px; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
   /* four columns balanced by height; on a narrow screen they wrap to two rows and the window scrolls */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; align-items: start; }
@@ -50,6 +54,7 @@
 </head>
 <body>
 <main>
+  <header><h1 data-i18n="set.title"></h1><button id="close" data-i18n-title="toast.close">✕</button></header>
   <div class="welcome" id="welcome" data-i18n="set.welcome" hidden></div>
   <div class="grid">
     <div class="col">
@@ -185,9 +190,8 @@
     catch (e) { $('status').textContent = t('set.error', { text: errorText(e) }); bridge.invoke('settings:get').then(show); }
   };
   bridge.invoke('settings:get').then(show);
-  // the window follows the content: no scrollbar when a status note appears
-  let fitting;
-  new ResizeObserver(() => { clearTimeout(fitting); fitting = setTimeout(() => bridge.invoke('window:fit', document.querySelector('main').offsetHeight), 30); }).observe(document.querySelector('main'));
+  $('close').onclick = () => bridge.invoke('settings:close');
+  addEventListener('keydown', e => { if (e.key === 'Escape') bridge.invoke('settings:close'); }); // as Teams' own dialogs
   document.addEventListener('change', ({ target: el }) => {
     if (el.name) save({ [el.name]: el.type === 'checkbox' ? el.checked : el.value.trim() });
   });
