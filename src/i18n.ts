@@ -355,6 +355,8 @@ const S: Record<string, [string, string, string]> = {
   'set.diagCopy': ['звіт для автора', 'report for the author', 'отчёт для автора'],
   'set.diagCopied': ['Звіт скопійовано — без змісту чатів, можна надіслати автору', 'Report copied — no chat contents, ready to send to the author', 'Отчёт скопирован — без содержимого чатов, можно отправить автору'],
   'err.aiTimeout': ['немає відповіді за {s} с', 'no answer in {s} s', 'нет ответа за {s} с'],
+  'err.jiraUrl': ['Адреса Jira має починатися з https://', 'The Jira address must start with https://', 'Адрес Jira должен начинаться с https://'],
+  'err.badSetting': ['Неприпустиме значення налаштування ({key})', 'Not a valid value for this setting ({key})', 'Недопустимое значение настройки ({key})'],
   'err.aiAuto': ['Самостійно ШІ працює лише без інструментів (Claude Code, Codex або Ollama); інші — тільки за вашою кнопкою', 'On its own the app uses only an AI without tools (Claude Code, Codex or Ollama); the others answer on your click only', 'Самостоятельно ИИ работает только без инструментов (Claude Code, Codex или Ollama); остальные — только по вашей кнопке'],
   'err.sending': ['Уже надсилається', 'Already being sent', 'Уже отправляется'],
   'toast.more': ['Ще сповіщень: {n}', '{n} more notifications', 'Ещё уведомлений: {n}'],

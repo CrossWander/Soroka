@@ -162,7 +162,7 @@ function updateSettings(input: Record<string, unknown>) {
   const next: Record<string, unknown> = { ...settings };
   for (const [key, value] of Object.entries(input)) {
     const ok = key in OPTIONS ? OPTIONS[key].includes(value) : !!CHECKS[key]?.(value);
-    if (!ok) throw Object.assign(new Error(`bad setting ${key}`), { status: 400 });
+    if (!ok) throw Object.assign(new Error(key === 'jiraUrl' ? t('err.jiraUrl') : t('err.badSetting', { key })), { status: 400 });
     next[key] = value;
   }
   const old = settings;
@@ -172,10 +172,13 @@ function updateSettings(input: Record<string, unknown>) {
   if (settings.theme !== old.theme) void applyTheme();
   if (settings.aiOff !== old.aiOff) void refreshAi();
   if (settings.officeMenu !== old.officeMenu) void applyOfficeMenu();
-  if (settings.jiraUrl !== old.jiraUrl && status === 'ready') void jiraLinks().catch(e => log('jira links:', errorText(e)));
-  if (settings.language !== old.language) { // every window of the app redraws in the new language
+  if (settings.jiraUrl !== old.jiraUrl) { // the chats' links, and the panel's cards, which read the address when they open
+    if (status === 'ready') void jiraLinks().catch(e => log('jira links:', errorText(e)));
+    for (const page of Object.values(panelPages)) page.webContents.reload();
+  }
+  if (settings.language !== old.language) { // every page of the app's own redraws in the new language; web pages (Outlook, Jira) keep what is typed in them
     i18n.setLang(settings.language as i18n.Lang);
-    for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin) w.webContents.reload();
+    for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin && w.webContents.getURL().startsWith('file:')) w.webContents.reload();
     settingsView?.webContents.reload(); // layers, not windows
     for (const page of Object.values(panelPages)) page.webContents.reload();
   }

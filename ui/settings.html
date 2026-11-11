@@ -47,6 +47,7 @@
   select, button, textarea, input { font: inherit; color: var(--fg); }
   select, input:not([type="checkbox"]), textarea { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-width: 0; max-width: 100%; }
   input.wide { width: 260px; }
+  [aria-invalid="true"] { border-color: var(--warn) !important; } /* turned down: the text stays to be fixed */
   textarea { width: 100%; box-sizing: border-box; height: 84px; resize: vertical; }
   textarea[name="quickReplies"] { height: 112px; } /* all five phrases in sight */
   button { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); cursor: pointer; white-space: nowrap; }
@@ -203,9 +204,14 @@
   const spin = () => Object.assign(document.createElement('span'), { className: 'spin' }); // the AI takes a while: show it is working
   $('welcome').hidden = !new URLSearchParams(location.search).has('welcome');
   let current = {}, models = {};
-  const show = s => {
+  // keep: a field whose value the user is still at (the one being typed in, or one the app turned down: fixed, not wiped)
+  const show = (s, keep) => {
     current = s;
-    document.querySelectorAll('[name]').forEach(el => (el.type === 'checkbox' ? (el.checked = s[el.name]) : (el.value = String(s[el.name]))));
+    document.querySelectorAll('[name]').forEach(el => {
+      if (el === keep || (el === document.activeElement && el.type !== 'checkbox')) return;
+      if (el.type === 'checkbox') el.checked = s[el.name]; else el.value = String(s[el.name]);
+      el.removeAttribute('aria-invalid');
+    });
     $('modeNote').textContent = t(`set.note.${s.wakeMode}`);
     document.querySelectorAll('[data-ai-on]').forEach(el => (el.hidden = s.aiOff)); // "Do not use AI": nothing about AI is left
     document.querySelectorAll('[data-ai-off]').forEach(el => (el.hidden = !s.aiOff));
@@ -213,16 +219,30 @@
     showModels(); // the model lists hold only what the AIs reported: pick the chosen ones there
     showToken(); // a new Jira address leaves the token saved for the old one unused
   };
-  const save = async patch => {
+  const save = async (patch, el) => {
     try { show(await bridge.invoke('settings:set', patch)); $('status').textContent = t('set.saved'); }
-    catch (e) { $('status').textContent = t('set.error', { text: errorText(e) }); bridge.invoke('settings:get').then(show); }
+    catch (e) {
+      $('status').textContent = t('set.error', { text: errorText(e) });
+      el?.setAttribute('aria-invalid', 'true');
+      bridge.invoke('settings:get').then(s => show(s, el?.type === 'checkbox' ? undefined : el));
+    }
   };
-  bridge.invoke('settings:get').then(show);
+  bridge.invoke('settings:get').then(s => show(s));
   $('close').onclick = () => bridge.invoke('settings:close');
   addEventListener('keydown', e => { if (e.key === 'Escape') bridge.invoke('settings:close'); }); // as Teams' own dialogs
   document.addEventListener('change', ({ target: el }) => {
-    if (el.name) save({ [el.name]: el.type === 'checkbox' ? el.checked : el.value.trim() });
+    if (el.name) save({ [el.name]: el.type === 'checkbox' ? el.checked : el.value.trim() }, el);
   });
+  // A short note whose whole text was only in its tooltip opens in place on a click or Enter, for the keyboard and screen readers too.
+  for (const note of document.querySelectorAll('.note[data-i18n-title]')) {
+    const short = note.textContent, full = note.title;
+    Object.assign(note, { tabIndex: 0, role: 'button' });
+    note.setAttribute('aria-expanded', 'false');
+    note.style.cursor = 'pointer';
+    const toggle = e => { e.preventDefault(); const open = note.getAttribute('aria-expanded') !== 'true'; note.textContent = open ? full : short; note.setAttribute('aria-expanded', String(open)); };
+    note.onclick = toggle;
+    note.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') toggle(e); };
+  }
   // Both model lists hold the models of every AI ready ("provider:model"), grouped by AI; a model the plan does not
   // include stays, greyed out with the reason, and so does a chosen one whose AI is not ready now.
   let names = {}; // provider id → its name, from the status
