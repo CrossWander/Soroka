@@ -33,6 +33,7 @@
     },
     "electronFuses": {
       "runAsNode": false,
+      "enableCookieEncryption": true,
       "enableNodeCliInspectArguments": false,
       "enableNodeOptionsEnvironmentVariable": false,
       "enableEmbeddedAsarIntegrityValidation": true,
