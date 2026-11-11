@@ -183,7 +183,8 @@ const PROVIDERS: Provider[] = [
 
   // On this computer, no account: a model the user pulled into Ollama
   { id: 'ollama', name: 'Ollama', install: 'https://ollama.com/download',
-    exe: () => 'http://127.0.0.1:11434',
+    // installed here: with no Ollama, a program of another user of this computer could answer on its port
+    exe: () => (onPath(['ollama'], [path.join(LOCAL, 'Programs', 'Ollama')]) ? 'http://127.0.0.1:11434' : undefined),
     info: async url => {
       const r = await fetch(`${url}/api/version`, { signal: AbortSignal.timeout(1500) }).then(r => r.json(), () => undefined);
       return r ? { path: url, version: r.version, loggedIn: true } : { path: undefined };

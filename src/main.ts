@@ -91,11 +91,14 @@ const limited: Record<string, number> = {};
 const free = (m: string) => !(limited[ai.providerOf(m)] > Date.now());
 // An AI without tools (ai.SEALED): what a chat says cannot make it run or open anything.
 const sealed = (m: string) => ai.SEALED.includes(ai.providerOf(m)) && !aiInfo.find(i => i.id === ai.providerOf(m))?.tools;
+// Ollama takes over or answers on its own only when the user picked it: an Ollama not running leaves its port to any
+// program of this computer, another user's too.
+const standIn = (m: string) => sealed(m) && ai.providerOf(m) !== 'ollama';
 // The model the user chose for this, or the first one ready while that one is not (its AI signed out or past its limit);
 // another AI takes over only when it has no tools. auto: the app asks on its own, not on the user's click — an AI without tools only.
 const modelFor = (key: 'draftModel' | 'summaryModel', auto = false) => {
-  const ok = usable().filter(m => !auto || sealed(m)), choice = ok.includes(settings[key]) ? settings[key] : ok[0] ?? '';
-  return free(choice) ? choice : ok.find(m => free(m) && (sealed(m) || ai.providerOf(m) === ai.providerOf(choice))) ?? choice;
+  const ok = usable().filter(m => !auto || sealed(m)), choice = ok.includes(settings[key]) ? settings[key] : ok.find(m => !auto || standIn(m)) ?? '';
+  return free(choice) ? choice : ok.find(m => free(m) && (standIn(m) || ai.providerOf(m) === ai.providerOf(choice))) ?? choice;
 };
 const list = (s: string) => s.split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
