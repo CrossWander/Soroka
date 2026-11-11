@@ -1746,7 +1746,10 @@ function startApi() {
       }
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, (e as { status?: number }).status ?? 500, { error: errorText(e) }); }
-  }).on('error', e => log('api:', e.message)).listen(PORT, '127.0.0.1', () => log(`api on 127.0.0.1:${PORT}`));
+  }).on('error', e => { // the port taken: tb.mjs would hand the token to whatever program holds it
+    log('api:', e.message);
+    toast({ title: t('toast.apiBusy', { port: PORT }), message: t('toast.apiBusyText'), tone: 'error', long: true });
+  }).listen(PORT, '127.0.0.1', () => log(`api on 127.0.0.1:${PORT}`));
 }
 
 // ---------- start ----------
