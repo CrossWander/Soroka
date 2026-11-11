@@ -1156,15 +1156,15 @@ async function ringAction(i: number) {
 // The second page lives only while the call does: the window closes when the call ends, closing it leaves the call.
 let callWin: BaseWindow | null = null;
 let callPage: Electron.WebContents | null = null;
-function onCall(on: boolean) { // either page may report: the main one a call starting, the call window's one its end
-  if (on && !callWin) popOutCall();
+function onCall(on: string) { // either page may report: the main one a call starting, the call window's one its end
+  if (on && !callWin) popOutCall(on);
   // looked at again a few seconds on: between the join screen and the call itself neither may be in the page for a moment
   // (a page that does not answer in 5 s counts as ended)
   else if (!on && callWin) setTimeout(() => void Promise.race([callPage?.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.CALL_UI)})`),
     new Promise(r => setTimeout(() => r(false), 5000))]).then(still => { if (!still) callWin?.close(); }, () => callWin?.close()), 3000);
 }
-function popOutCall() {
-  log('call: to its own window');
+function popOutCall(what: string) {
+  log(`call: to its own window (${what})`);
   const view = teamsView;
   closeSettings();
   teamsWin.contentView.removeChildView(view);

@@ -263,14 +263,15 @@ export const HANGUP = '[data-tid*="hangup" i], [id*="hangup" i]';
 // ...or the screen before joining a meeting (camera and microphone choice, the lobby): its parts are "prejoin-…"
 export const CALL_UI = `${HANGUP}, [data-tid^="prejoin-"]`;
 export const inCall = (): Promise<boolean> => run(s => !!document.querySelector(s), CALL_UI);
-// Told at once when a call or a meeting's join screen comes or goes in the page, as the rings are.
+// Told at once when a call or a meeting's join screen comes or goes in the page, as the rings are:
+// with what matched (its data-tid or id, for the log), or '' when it is gone.
 const CALL = 'tbCall';
-export async function watchCall(onChange: (on: boolean) => void) {
-  await bind(CALL, payload => onChange(payload === '1'));
+export async function watchCall(onChange: (on: string) => void) {
+  await bind(CALL, onChange);
   await run(([name, sel]) => {
     const w = window as any;
     w.__tbCall?.disconnect();
-    const read = () => (document.querySelector(sel) ? '1' : '');
+    const read = () => { const e = document.querySelector(sel); return e ? e.getAttribute('data-tid') || e.id || '?' : ''; };
     let last = read(), timer = 0;
     if (last) w[name]?.(last);
     w.__tbCall = new MutationObserver(() => {
