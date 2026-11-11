@@ -495,24 +495,36 @@ function trimRam() {
 }
 // After the app opened chats itself: give the user back their chat, or park a hidden window on the self-chat,
 // where nothing new arrives unseen (a new message in the chat left open would be read silently).
+// Never fails what it follows: the work before it is done, a failure here is only logged.
 async function restoreChat(before?: string) {
-  if (before) await teams.openChat({ id: before, title: before });
-  else if (!windowInUse()) { await teams.showChats(); await teams.openChat(await teams.selfChat()); } // the user may have left it on Activity
+  try {
+    if (before) await teams.openChat({ id: before, title: before });
+    else if (!windowInUse()) { await teams.showChats(); await teams.openChat(await teams.selfChat()); } // the user may have left it on Activity
+  } catch (e) { log('restore chat:', errorText(e)); }
 }
+// Work in a chat the app opens itself (sending, a reaction, reading): the user's own chat comes back after it, or a hidden
+// window parks on the self-chat, so later messages in that chat are not read unseen.
+const inChat = <T>(chatId: string, fn: () => Promise<T>) => serial(async () => {
+  const before = windowInUse() ? await teams.currentChatId() : undefined;
+  try { return await fn(); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
+});
 
-// The chat open in the Teams window, if any.
-async function currentChat() {
+// The chat open in the Teams window, if any, and what else the action reads there: in one turn of the queue, so the app's
+// own work cannot switch the chat in between.
+const currentChat = <T = undefined>(more?: () => Promise<T>) => serial(async () => {
   const id = await teams.currentChatId();
-  return id ? (await serial(teams.chatList)).find(c => c.id === id) ?? { id, title: id } : undefined;
-}
+  if (!id) return undefined;
+  const c = (await teams.chatList()).find(x => x.id === id) ?? { id, title: id };
+  return { ...c, more: await more?.() as T };
+});
 // "Suggest a reply" for the chat the user is looking at: an answer card with variants, sent only on their click.
 async function suggestHere() {
-  const c = await currentChat();
+  const c = await currentChat(() => teams.lastMessages(15));
   if (!c) return toast({ title: t('toast.openChat'), message: t('toast.replyHere') });
   const existing = pending().find(d => d.chatId === c.id && !d.improve);
   let n = existing?.n;
   if (!n) {
-    const msgs = await serial(() => teams.lastMessages(15));
+    const msgs = forAi(c.more);
     const last = [...msgs].reverse().find(m => !m.mine);
     n = addDraft({ chatId: c.id, title: c.title, note: c.title, last: last ? `${last.author}: ${last.text}` : '', text: '', context: msgs.map(line) });
   }
@@ -527,8 +539,8 @@ async function suggestThenShow(n: string) {
 }
 // "Improve my text": what the user typed in the open chat comes back as a card with versions; sending one replaces their text.
 async function improveHere() {
-  const c = await currentChat();
-  const text = c && (await serial(teams.boxText)).trim();
+  const c = await currentChat(async () => ({ text: (await teams.boxText()).trim(), msgs: await teams.lastMessages(10) }));
+  const text = c?.more.text;
   if (!c || !text) return toast({ title: t('toast.writeFirst'), message: t('toast.improveHere') });
   for (const d of pending()) if (d.chatId === c.id && d.improve) state.drafts[d.n].status = 'rejected'; // one card per chat: the newest text
   const msgs = await serial(() => teams.lastMessages(10));
@@ -541,20 +553,25 @@ async function summaryHere() {
 }
 
 // Loads Teams. Without a session it waits for sign-in: at start it opens the window for it, later it only asks with a toast.
+// Teams stuck on its own pages (an error page, a load that never ends) is loaded again, up to 3 times; another site is a
+// sign-in (Microsoft's or the company's own), and waits for the user. A reload keeps the chat the user was in.
 async function connect(openForLogin: boolean) {
+  const keep = status === 'ready' && windowInUse() ? await teams.currentChatId().catch(() => undefined) : undefined;
   status = 'starting'; refreshTray();
-  await teamsPage.loadURL(teams.TEAMS_URL).catch(() => {}); // Teams redirects while loading
-  await teams.emulateFocus();
-  let opened = false;
-  for (const end = Date.now() + 90_000; !(await teams.ready(2000));) {
-    const onLoginPage = /^https:\/\/login\./.test(teamsPage.getURL());
-    if (status === 'login' || !(onLoginPage || Date.now() > end)) continue;
+  const load = async () => { await teamsPage.loadURL(teams.TEAMS_URL).catch(() => {}); await teams.emulateFocus().catch(() => {}); }; // Teams redirects while loading
+  await load();
+  let opened = false, reloads = 0;
+  for (let end = Date.now() + 90_000; !(await teams.ready(2000));) {
+    const url = teamsPage.getURL(), late = Date.now() > end;
+    if (late && TEAMS_PAGE.test(url) && reloads < 3) { reloads++; log(`teams did not load: loading again (${reloads})`); await load(); end = Date.now() + 90_000; continue; }
+    if (status === 'login' || !(/^https:\/\/login\./.test(url) || late)) continue;
     status = 'login'; refreshTray();
     if (openForLogin && !teamsWin.isVisible()) { opened = true; showTeams(); }
     else toast({ title: t('toast.teamsLogin'), message: t('toast.teamsLoginText'), hint: t('toast.teamsLoginHint'), tone: 'error', long: true, click: showTeams });
   }
   if (opened) teamsWin.hide();
   await watch();
+  if (keep) await teams.openChat({ id: keep, title: keep }).catch(() => {});
   status = 'ready'; refreshTray();
   loadedAt = Date.now();
   log('connected');
@@ -825,12 +842,11 @@ const asked = (question: string, prompt: string): Request => ({
 // Reads the chat (Teams marks it read) and builds the request; undefined when the period has no messages.
 async function summaryRequest(chatId: string, title: string, { n = 500, signal, plain, ...period }: Range, question?: string): Promise<Found | undefined> {
   if (!plain) notToAi(title);
-  const msgs = await working(t('busy.reading', { title }), () => serial(async () => {
-    const before = windowInUse() ? await teams.currentChatId() : undefined;
+  const read = await working(t('busy.reading', { title }), () => inChat(chatId, async () => {
     try { return await teams.history({ id: chatId, title }, Math.min(n, 500), { ...period, signal, veil: t('veil.reading', { title }) }); }
     catch (e) { throw (e as { switched?: boolean }).switched ? new Error(t('err.chatSwitched')) : e; }
-    finally { await restoreChat(before && before !== chatId ? before : undefined); }
   }));
+  const msgs = plain ? read : forAi(read);
   if (signal?.aborted) throw new Error(t('err.stopped'));
   if (!msgs.length) return undefined;
   const found = { count: msgs.length, from: when(msgs[0].id), parts: [{ id: chatId, title, msgs }] };
@@ -954,11 +970,12 @@ async function learnStyle() {
   const mine = await serial(async () => {
     const before = windowInUse() ? await teams.currentChatId() : undefined;
     const texts: string[] = [];
-    for (const c of (await teams.chatList()).filter(c => !c.unread && (c.type === 'direct' || c.type === 'group') && !aiSkipped(c.title)).slice(0, 8)) {
-      await teams.openChat(c);
-      texts.push(...(await teams.lastMessages(60)).filter(m => m.mine && m.text).map(m => m.text));
-    }
-    await restoreChat(before);
+    try {
+      for (const c of (await teams.chatList()).filter(c => !c.unread && (c.type === 'direct' || c.type === 'group') && !aiSkipped(c.title)).slice(0, 8)) {
+        await teams.openChat(c);
+        texts.push(...(await teams.lastMessages(60)).filter(m => m.mine && m.text).map(m => m.text));
+      }
+    } finally { await restoreChat(before); }
     return texts;
   });
   if (mine.length < 5) throw new Error(t('err.fewMessages'));
@@ -1048,7 +1065,7 @@ function showRing() {
   const win = ringWin = new BrowserWindow({ width: 392, height: 200, show: false, frame: false, transparent: true, hasShadow: false, resizable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: t('call.window'), webPreferences: { preload } });
   win.loadFile(ui('call.html'));
-  win.webContents.once('did-finish-load', () => win.webContents.send('ring', ringView()));
+  win.webContents.on('did-finish-load', () => win.webContents.send('ring', ringView())); // also after a reload (a language change)
   win.on('closed', () => { if (ringWin === win) ringWin = null; });
 }
 handle('ring:size', (_e, height: number) => { // top right: the regular cards come up at the bottom right
@@ -1063,8 +1080,11 @@ async function ringAction(i: number) {
   const r = ring;
   const b = r?.buttons[i];
   if (!r || !b) return closeRing();
-  if (r.live) await teams.ringClick(i); // not through serial(): a call cannot wait for a summary that reads history
-  else if (!b.reject) await serial(() => teams.joinMeeting(`${r.title} ${r.message}`));
+  try {
+    if (r.live) await teams.ringClick(i); // not through serial(): a call cannot wait for a summary that reads history
+    else if (!b.reject) await serial(() => teams.joinMeeting(`${r.title} ${r.message}`));
+  } catch (e) { showTeams(); throw e; } // the card stays and says why; Teams' own buttons are in its window
+
   // an accepted call, or a meeting's join screen, comes up in its own window (onCall): if it never does, show where it is
   if (!b.reject) setTimeout(() => { if (!callWin) showTeams(); }, 5000);
   closeRing();
@@ -1079,8 +1099,9 @@ let callPage: Electron.WebContents | null = null;
 function onCall(on: boolean) { // either page may report: the main one a call starting, the call window's one its end
   if (on && !callWin) popOutCall();
   // looked at again a few seconds on: between the join screen and the call itself neither may be in the page for a moment
-  else if (!on && callWin) setTimeout(() => void callPage?.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.CALL_UI)})`)
-    .then(still => { if (!still) callWin?.close(); }, () => callWin?.close()), 3000);
+  // (a page that does not answer in 5 s counts as ended)
+  else if (!on && callWin) setTimeout(() => void Promise.race([callPage?.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.CALL_UI)})`),
+    new Promise(r => setTimeout(() => r(false), 5000))]).then(still => { if (!still) callWin?.close(); }, () => callWin?.close()), 3000);
 }
 function popOutCall() {
   log('call: to its own window');
@@ -1156,11 +1177,7 @@ let reactWin: BrowserWindow | null = null;
 async function react(n: string, emoticon: string, tab: number, quiet = false) { // quiet: the card it came from says so itself
   const d = state.drafts[n];
   if (!d) throw new Error(t('err.handled'));
-  await serial(async () => {
-    const before = windowInUse() ? await teams.currentChatId() : undefined;
-    try { await teams.react({ id: d.chatId, title: d.title }, emoticon, tab); }
-    finally { await restoreChat(before && before !== d.chatId ? before : undefined); }
-  });
+  await inChat(d.chatId, () => teams.react({ id: d.chatId, title: d.title }, emoticon, tab));
   d.reminded = true;
   state.reactions = [emoticon, ...state.reactions.filter(x => x !== emoticon)].slice(0, 12);
   saveState();
@@ -1283,7 +1300,7 @@ async function tick() {
   if (status !== 'ready') return;
   ticking = true;
   try {
-    if (!(await teams.ready()) && !(await calling())) { log('session lost, reconnecting'); await serial(() => connect(false)); return; }
+    if (!(await teams.ready(10_000)) && !(await calling())) { log('session lost, reconnecting'); await serial(() => connect(false)); return; } // a moment of redrawing is no lost session
     if (!windowInUse() && Date.now() - loadedAt > 3 * 3600_000 && !(await calling())) { await serial(() => connect(false)); return; } // fresh page every 3 h
     // ponytail: "Do not disturb" (and presenting) by the words of a ru/uk/en Teams; another UI language never reads as busy
     teamsDnd = /не беспокоить|не турбувати|do not disturb|презент|presenting/i.test(await teams.myStatus().catch(() => ''));
@@ -1291,10 +1308,10 @@ async function tick() {
     if (mode() === 'drafts' && teamsWin.isFocused()) return; // drafts mode opens chats: not under the user's hands
     const found = await serial(async () => {
       const before = windowInUse() ? await teams.currentChatId() : undefined;
-      if (!windowInUse()) await teams.showChats(); // the chat list is not there while Teams shows Activity
-      const list = await scan();
-      await restoreChat(before);
-      return list;
+      try {
+        if (!windowInUse()) await teams.showChats(); // the chat list is not there while Teams shows Activity
+        return await scan();
+      } finally { await restoreChat(before); }
     });
     for (const n of found) {
       if (await held(n)) continue; // waits for nothing from the user: in the hourly round-up
@@ -1397,7 +1414,7 @@ handle('summary:handoff', logged('summary handoff', async (_e: unknown, chatId: 
 handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: string) => {
   const d = state.drafts[n];
   if (d?.status !== 'pending') throw new Error(t('err.handled'));
-  if (!d.context?.length) d.context = (await serial(() => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
+  if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
   await handoff(variantsRequest(d), 'draftModel');
 }));
 handle('models:get', () => models());
@@ -1529,7 +1546,9 @@ function startApi() {
         const part = url.searchParams.get('chat');
         need(part, 'chat');
         const n = Math.min(Number(url.searchParams.get('n') ?? 20), 500);
-        return json(res, 200, await serial(async () => { const c = await teams.findChat(part!); notToAi(c.title); return { chat: c.title, messages: await teams.history(c, n) }; }));
+        const c = await serial(() => teams.findChat(part!));
+        notToAi(c.title);
+        return json(res, 200, { chat: c.title, messages: forAi(await inChat(c.id, () => teams.history(c, n))) });
       }
       if (route === 'GET /summary') { // the same summary the app's window shows
         const part = url.searchParams.get('chat');

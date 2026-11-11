@@ -16,8 +16,14 @@ const plain = (t: string) => t.replace(/[\p{Extended_Pictographic}️​-‍⁠�
 
 // Teams' own pages: the app talks to these only.
 export const TEAMS_PAGE = /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//;
+// A page that stopped answering (a hung renderer) fails the step instead of holding the app's queue for ever.
+const within = <T>(p: Promise<T>, ms: number, what: string) => new Promise<T>((ok, no) => {
+  const timer = setTimeout(() => no(fail(504, `the Teams page did not answer in ${ms / 1000} s (${what})`)), ms);
+  p.then(v => { clearTimeout(timer); ok(v); }, e => { clearTimeout(timer); no(e); });
+});
+
 let wc: WebContents;
-const cdp = (method: string, params: object = {}) => wc.debugger.sendCommand(method, params);
+const cdp = (method: string, params: object = {}) => within(wc.debugger.sendCommand(method, params), 20_000, method);
 
 export function attach(contents: WebContents) {
   wc = contents;
@@ -30,7 +36,7 @@ export const emulateFocus = () => cdp('Emulation.setFocusEmulationEnabled', { en
 // A page that never loaded anything waits for a load to run a script, for ever: the fresh page a call leaves behind (popOutCall)
 // loads in its turn in the app's queue, so a task already in it would wait for itself. There it fails at once.
 const run = (fn: (arg: any) => unknown, arg: unknown = null): Promise<any> => !wc.getURL() ? Promise.reject(fail(503, 'Teams page not loaded yet'))
-  : wc.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
+  : within(wc.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true), 30_000, 'a script');
 
 async function waitFor(fn: (arg: any) => unknown, arg: unknown = null, timeout = 15_000) {
   for (const end = Date.now() + timeout; ; await sleep(250)) {
@@ -50,12 +56,17 @@ export const selfCheck = (): Promise<Record<string, boolean | null>> => run(() =
   const has = (s: string) => !!document.querySelector(s);
   const listShown = has('[role="tree"]'), pane = document.querySelector('[data-tid="message-pane-list-viewport"]') as HTMLElement | null;
   const chatOpen = !!pane && pane.innerText.trim().length > 40; // an empty new chat has no messages to find
+  const items = [...document.querySelectorAll('[role="treeitem"][data-item-type="chat"]')];
   return {
     rail: has('[data-tid="app-bar-wrapper"]'),
     chat: has('[data-tid="86fcd49b-61a2-4701-b771-54728cd291fb"]'),
     activity: has('[data-tid="14d6962d-6eeb-4f48-8890-de55454bb136"]'),
     list: listShown ? has('[role="treeitem"][data-item-type="chat"] [id^="title-chat-list-item_"]') : null,
-    messages: chatOpen ? has('[data-tid="chat-pane-message"]') : null,
+    // a chat's id ("<kind>|<id>") and the ids its unread and @mention marks are named by
+    ids: listShown && items.length ? items.every(e => (e.getAttribute('data-fui-tree-item-value') || '').includes('|')) : null,
+    marks: listShown && items.length ? items.some(e => (e.getAttribute('aria-labelledby') || '').includes('chat-list-item_')) : null,
+    header: chatOpen ? has('[id^="chat-header-"]') : null,
+    messages: chatOpen ? has('[data-tid="chat-pane-message"][data-mid]') && has('[id^="content-"]') : null,
     compose: chatOpen ? has('[id^="new-message-"]') : null,
     menu: has('[data-tid="more-options-header"]'),
   };
@@ -229,8 +240,11 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
     w.__tbRing.observe(document.body, { subtree: true, childList: true });
   }, RING);
 }
-// A button of the ringing toast, by its number in Ring.buttons. ponytail: a real click, so a history veil on the page would take it
-export const ringClick = (i: number) => click(`[data-tb-ring="${i}"]`);
+// A button of the ringing toast, by its number in Ring.buttons: a real click, so the veil of a summary reading goes first.
+export async function ringClick(i: number) {
+  if (veiling) { await veiling.page.removeInsertedCSS(veiling.key).catch(() => {}); veiling = null; }
+  await click(`[data-tb-ring="${i}"]`);
+}
 // "Join" after Teams' own meeting toast is gone: the meeting chat named in the toast, and its Join button.
 export async function joinMeeting(text: string) {
   const c = (await chatList()).find(x => x.type === 'meeting' && x.title && text.includes(x.title));
@@ -466,12 +480,15 @@ export const lastMessages = (n: number): Promise<Message[]> => run(n => {
 // veil: a text shown over the page while it reads; the veil also takes the clicks, since a click on another chat
 // would mix that chat into the history.
 type HistoryOptions = { since?: number; afterMine?: boolean; signal?: AbortSignal; veil?: string };
+let veiling: { page: WebContents; key: string } | null = null; // the veil on screen: a call's buttons take it away (ringClick)
 const VEIL = (text: string) => `body::before { content: ''; position: fixed; inset: 0; z-index: 2147483646; background: rgba(0, 0, 0, .35); cursor: progress; }
   body::after { content: ${JSON.stringify(text)}; position: fixed; left: 50%; top: 40%; transform: translateX(-50%); z-index: 2147483647; max-width: 60vw;
     padding: 12px 18px; border-radius: 8px; background: #292929; color: #fff; font: 14px "Segoe UI", system-ui, sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, .4); }`;
 export async function history(c: ChatRef, n: number, { since = 0, afterMine, signal, veil }: HistoryOptions = {}): Promise<Message[]> {
   await openChat(c);
-  const veiled = veil ? await wc.insertCSS(VEIL(veil)) : undefined; // a JSON string is a valid CSS string: the title cannot break out of it
+  // the page it went on: a call may take this page to its own window meanwhile (popOutCall), the veil must leave with it
+  const page = wc, veiled = veil ? await page.insertCSS(VEIL(veil)) : undefined; // a JSON string is a valid CSS string: the title cannot break out of it
+  if (veiled) veiling = { page, key: veiled };
   const seen = new Map<string, Message>();
   const collect = async () => { for (const m of await lastMessages(1000)) seen.set(m.id, m); };
   const scroll = (top: boolean) => run(top => { const v = document.querySelector('[data-tid="message-pane-list-viewport"]'); if (v) v.scrollTop = top ? 0 : v.scrollHeight; }, top);
@@ -489,7 +506,9 @@ export async function history(c: ChatRef, n: number, { since = 0, afterMine, sig
     await scroll(false);
     // another chat opened meanwhile (from the keyboard, say): what was collected may belong to it
     if (!(await isOpen(c))) throw Object.assign(new Error('another chat was opened while reading'), { switched: true });
-  } finally { if (veiled) await wc.removeInsertedCSS(veiled).catch(() => {}); }
+  } finally {
+    if (veiled) { await page.removeInsertedCSS(veiled).catch(() => {}); if (veiling?.key === veiled) veiling = null; }
+  }
   const from = Math.max(since, afterMine ? lastMine() + 1 : 0);
   return [...seen.values()].filter(m => Number(m.id) >= from).sort((a, b) => Number(a.id) - Number(b.id)).slice(-n);
 }
