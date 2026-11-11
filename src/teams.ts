@@ -250,18 +250,24 @@ export async function ringClick(i: number) {
   await click(`[data-tb-ring="${i}"]`);
 }
 // "Join" after Teams' own meeting toast is gone: the meeting chat named in the toast, and its Join button.
+// The longest title in it: a meeting named with a part of another's title ("Daily") does not take its place.
 export async function joinMeeting(text: string) {
-  const c = (await chatList()).find(x => x.type === 'meeting' && x.title && text.includes(x.title));
+  const c = (await chatList()).filter(x => x.type === 'meeting' && x.title && text.includes(x.title)).sort((a, b) => b.title.length - a.title.length)[0];
   if (!c) return false;
   await openChat(c);
   if (!(await exists('[data-tid="chat-join-button"]', 3000))) return false;
   await click('[data-tid="chat-join-button"]');
   return true;
 }
+// Teams' own parts, never the inside of a message: a card or formatted text in a message might carry an id or a data-tid
+// that looks like one of them (not seen; nothing known keeps a message's markup from bringing one).
+const MSG = '[data-tid="chat-pane-message"]';
+const OUT = `:not(${MSG} *)`;
 // A call or meeting in progress: its hang-up button ("Leave" is #hangup-button in a live call; the compact view's one not seen yet)
-export const HANGUP = '[data-tid*="hangup" i], [id*="hangup" i]';
+export const HANGUP = `[data-tid*="hangup" i]${OUT}, [id*="hangup" i]${OUT}`;
+export const LEAVE = `#hangup-button${OUT}`;
 // ...or the screen before joining a meeting (camera and microphone choice, the lobby): its parts are "prejoin-…"
-export const CALL_UI = `${HANGUP}, [data-tid^="prejoin-"]`;
+export const CALL_UI = `${HANGUP}, [data-tid^="prejoin-"]${OUT}`;
 export const inCall = (): Promise<boolean> => run(s => !!document.querySelector(s), CALL_UI);
 // Told at once when a call or a meeting's join screen comes or goes in the page, as the rings are:
 // with what matched (its data-tid or id, for the log), or '' when it is gone.
@@ -471,15 +477,17 @@ export async function openActivity(id: string) {
   if (!(await exists(item, 10_000))) throw fail(404, 'the item is no longer in Activity');
   await click(item);
 }
-export const currentChatId =(): Promise<string | undefined> => run(() => document.querySelector('[id^="chat-header-"]')?.id.replace('chat-header-', ''));
-const isOpen = (c: ChatRef): Promise<boolean> => run(id => !!document.getElementById(`chat-header-${id}`), c.id);
+const HEADER = `[id^="chat-header-"]${OUT}`;
+export const currentChatId =(): Promise<string | undefined> => run(h => document.querySelector(h)?.id.replace('chat-header-', ''), HEADER);
+const header = ([h, id]: string[]) => [...document.querySelectorAll(h)].some(e => e.id === `chat-header-${id}`);
+const isOpen = (c: ChatRef): Promise<boolean> => run(header, [HEADER, c.id]);
 export async function openChat<T extends ChatRef>(c: T) {
   if (await isOpen(c)) return c;
   await showChats();
   // right after load the list still shifts and a click can miss, so retry
   for (let attempt = 1; ; attempt++) {
     await click(`[role="treeitem"][data-fui-tree-item-value$="|${c.id}"]`);
-    if (await waitFor(id => !!document.getElementById(`chat-header-${id}`), c.id, 5000)) break;
+    if (await waitFor(header, [HEADER, c.id], 5000)) break;
     if (attempt === 3) throw fail(502, `chat "${c.title}" did not open`);
   }
   await exists('[id^="message-body-"]');
@@ -493,7 +501,8 @@ export const lastMessages = (n: number): Promise<Message[]> => run(n => {
     author = (m.closest('[data-tid="chat-pane-item"]')?.querySelector('[data-tid="message-author-name"]') as HTMLElement | null)?.innerText.trim() || author;
     const mid = m.getAttribute('data-mid') || '';
     // the message element itself also holds reactions ("1 реакция"); content-<id> is the text alone
-    const content = (document.getElementById(`content-${mid}`) ?? m) as HTMLElement;
+    // looked for inside this message: another message cannot lend it its text
+    const content = ([...m.querySelectorAll('[id^="content-"]')].find(e => e.id === `content-${mid}`) ?? m) as HTMLElement;
     // "Reply with quote" draws the quoted message as a card inside the content: its author and text are not this message's
     const card = content.querySelector('[data-tid="quoted-reply-card"]') as HTMLElement | null;
     const box = (card?.closest('[data-track-module-name="messageQuotedReply"]') ?? card) as HTMLElement | null;
@@ -542,7 +551,7 @@ export async function history(c: ChatRef, n: number, { since = 0, afterMine, sig
   return [...seen.values()].filter(m => Number(m.id) >= from).sort((a, b) => Number(a.id) - Number(b.id)).slice(-n);
 }
 
-const BOX = '[id^="new-message-"]';
+const BOX = `[id^="new-message-"]${OUT}`;
 const focusBox = () => run(b => (document.querySelector(b) as HTMLElement | null)?.focus(), BOX);
 const boxFocused = (): Promise<boolean> => run(b => !!document.activeElement?.closest(b), BOX);
 // Keys go out only while the compose box has the focus: Delete or Enter on a focused message could act on that message.

@@ -1242,7 +1242,7 @@ function popOutCall(what: string) {
   // leaving: Teams' own hang-up first, so the others see it at once, then the page goes and its memory with it
   win.on('close', () => {
     state.callBounds = win.getNormalBounds(); saveState();
-    void page.executeJavaScript(`document.getElementById('hangup-button')?.click()`).catch(() => {}) // "Leave", seen in a live call
+    void page.executeJavaScript(`document.querySelector(${JSON.stringify(teams.LEAVE)})?.click()`).catch(() => {}) // "Leave", seen in a live call
       .finally(() => setTimeout(() => page.close(), 1000));
   });
   win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } });
