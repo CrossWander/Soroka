@@ -37,6 +37,7 @@
   .note { color: var(--muted); font-size: 12px; }
   .group > .note { padding: 8px 14px; } /* under the rows: the AIs found, the self-check */
   .note:empty { display: none; }
+  .note.warn { color: var(--warn); }
   .ctl { flex: none; display: flex; align-items: center; gap: 8px; max-width: 60%; min-width: 0; }
   .ctl > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* a state: its title has it whole */
   .row > .grow { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* an AI program's state */
@@ -98,6 +99,11 @@
           <label class="row"><span class="text"><span data-i18n="set.officeMenu"></span><span class="note" data-i18n="set.officeMenuNote"></span></span>
             <input type="checkbox" name="officeMenu"></label>
           <div class="row"><span class="text" data-i18n="set.jira"></span><span class="ctl"><input class="wide" name="jiraUrl" data-i18n-placeholder="set.jiraPh"></span></div>
+          <!-- no name: the token goes only through jira:tokenSet, never with the settings, and is never shown back -->
+          <div class="row"><span class="text"><span data-i18n="set.jiraToken"></span><span class="note" data-i18n="set.jiraTokenNote"></span><span class="note warn" id="jiraTokenWarn" hidden></span></span>
+            <span class="ctl"><span id="jiraTokenState" hidden></span>
+              <input type="password" id="jiraToken" autocomplete="off" spellcheck="false" maxlength="500" data-i18n-placeholder="set.jiraTokenPh">
+              <button id="jiraTokenSave" data-i18n="set.jiraTokenSave"></button><button id="jiraTokenDelete" data-i18n="set.jiraTokenDelete" hidden></button></span></div>
           <div class="row"><span class="text" data-i18n="set.notify"></span><span class="ctl"><button id="notifyTest" data-i18n="set.notifyTest"></button></span></div>
         </div>
       </section>
@@ -205,6 +211,7 @@
     document.querySelectorAll('[data-ai-off]').forEach(el => (el.hidden = !s.aiOff));
     if (document.activeElement !== $('style')) $('style').value = s.style;
     showModels(); // the model lists hold only what the AIs reported: pick the chosen ones there
+    showToken(); // a new Jira address leaves the token saved for the old one unused
   };
   const save = async patch => {
     try { show(await bridge.invoke('settings:set', patch)); $('status').textContent = t('set.saved'); }
@@ -252,6 +259,25 @@
     finally { $('modelsCheck').disabled = false; }
   };
   $('style').onblur = () => save({ style: $('style').value.trim() });
+  // The Jira token: typed here and handed over, never read back; the app says whether one is saved, works, and whose it is
+  async function showToken() {
+    const s = await bridge.invoke('jira:token'), ok = !!s && !s.other && !s.bad;
+    $('jiraToken').hidden = $('jiraTokenSave').hidden = ok; // a working one is only shown as working, and can be removed
+    $('jiraTokenDelete').hidden = !s;
+    $('jiraTokenState').hidden = !ok;
+    $('jiraTokenWarn').hidden = !s || ok; // a saved one that is not used: why, under the name
+    if (ok) state($('jiraTokenState'), t('set.jiraTokenOk', { user: s.user }), 'ok');
+    else if (s) $('jiraTokenWarn').textContent = t(s.other ? 'set.jiraTokenOther' : 'set.jiraTokenRejected');
+  }
+  async function setToken(value) {
+    $('jiraTokenSave').disabled = $('jiraTokenDelete').disabled = true;
+    try { await bridge.invoke('jira:tokenSet', value); $('status').textContent = t('set.saved'); }
+    catch (e) { $('status').textContent = t('set.error', { text: errorText(e) }); }
+    finally { $('jiraToken').value = ''; $('jiraTokenSave').disabled = $('jiraTokenDelete').disabled = false; showToken(); } // the field keeps no secret
+  }
+  $('jiraTokenSave').onclick = () => { const v = $('jiraToken').value.trim(); if (v) setToken(v); };
+  $('jiraToken').onkeydown = e => { if (e.key === 'Enter') $('jiraTokenSave').click(); };
+  $('jiraTokenDelete').onclick = () => setToken('');
 
   function state(el, text, tone) { const d = document.createElement('span'); d.className = 'dot ' + tone; el.replaceChildren(d, text); el.title = text; }
   // One row per AI program found here: its state and, when it needs it, «Sign in»; the ones not installed are links

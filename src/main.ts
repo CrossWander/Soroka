@@ -1,7 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, ipcMain, nativeImage, nativeTheme, screen, session, shell } from 'electron';
+import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1360,8 +1360,7 @@ async function jiraIssue(key: string) {
   if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return null;
   const hit = jiraSeen.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.issue;
-  const r = await session.fromPartition('persist:teams').fetch(`${settings.jiraUrl.replace(/\/+$/, '')}/rest/api/2/issue/${key}?fields=summary,status`,
-    { headers: { Accept: 'application/json' }, credentials: 'include' }).catch(() => undefined); // include: the session's cookies
+  const r = await jiraGet(`/rest/api/2/issue/${key}?fields=summary,status`);
   if (r?.status === 401) return { login: true };
   if (!r?.ok) return null; // no such ticket, no access to it, or Jira away
   const j = await r.json().catch(() => undefined);
@@ -1374,6 +1373,53 @@ async function jiraIssue(key: string) {
 const jiraLinks = () => teams.watchJira(settings.jiraUrl.replace(/\/+$/, ''), keys => {
   for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000)
     : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000)).catch(e => log('jira links:', errorText(e)));
+});
+// A GET to Jira as the user: with the saved token, when it was saved for this address and Jira still takes it; else with
+// the cookies of a sign-in in a window of the app. The token never follows a redirect: one fails the request.
+async function jiraGet(apiPath: string) {
+  const base = settings.jiraUrl.replace(/\/+$/, ''), token = jiraToken(base);
+  if (token) {
+    const r = await net.fetch(`${base}${apiPath}`, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error' })
+      .catch(() => undefined);
+    jiraTokenBad = r?.status === 401;
+    if (r && !jiraTokenBad) return r;
+  }
+  return session.fromPartition('persist:teams').fetch(`${base}${apiPath}`, { headers: { Accept: 'application/json' }, credentials: 'include' }) // the session's cookies
+    .catch(() => undefined);
+}
+// The Jira personal access token: encrypted by Windows for the user's account on this computer (safeStorage: DPAPI), in a file
+// of its own; never in the settings, never in plain text, never shown again. Bound to the Jira address it was saved for and
+// sent only there. It leaves this process only in requests to that address: the settings page learns whether it works, and whose it is.
+const JIRA_TOKEN = file('jira-token.bin');
+let jiraTokenBad = false; // Jira turned the saved token down (expired, revoked): the cookies are tried instead
+function jiraSaved(): { base: string; token: string; user: string } | undefined {
+  try { return JSON.parse(safeStorage.decryptString(fs.readFileSync(JIRA_TOKEN))); } catch { return undefined; }
+}
+const jiraToken = (base: string) => { const s = jiraSaved(); return s?.base === base ? s.token : undefined; };
+ipcMain.handle('jira:token', () => {
+  const s = jiraSaved();
+  return s ? { user: s.user, other: s.base !== settings.jiraUrl.replace(/\/+$/, ''), bad: jiraTokenBad } : null;
+});
+// Saves a token Jira takes for the address in the settings ('' removes it). Only from the settings page.
+ipcMain.handle('jira:tokenSet', async (e, value: unknown) => {
+  if (e.sender !== settingsView?.webContents) return;
+  if (value === '') fs.rmSync(JIRA_TOKEN, { force: true });
+  else {
+    const base = settings.jiraUrl.replace(/\/+$/, ''), token = String(value).trim();
+    if (!base) throw new Error(t('set.jiraTokenNoUrl'));
+    if (!/^[\x21-\x7e]{10,500}$/.test(token)) throw new Error(t('set.jiraTokenBad')); // printable, no spaces: nothing to break a header
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(t('set.jiraTokenNoCrypt')); // never kept in plain text instead
+    const r = await net.fetch(`${base}/rest/api/2/myself`, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error' })
+      .catch(() => undefined);
+    if (r?.status === 401 || r?.status === 403) throw new Error(t('set.jiraTokenBad'));
+    if (!r?.ok) throw new Error(t('set.jiraTokenAway', { status: String(r?.status ?? '—') }));
+    const me = await r.json().catch(() => ({}));
+    fs.writeFileSync(JIRA_TOKEN, safeStorage.encryptString(JSON.stringify({ base, token, user: String(me.displayName || me.name || '') })), { mode: 0o600 });
+  }
+  log(value === '' ? 'jira token: removed' : 'jira token: saved'); // never the token itself
+  jiraTokenBad = false;
+  jiraSeen.clear();
+  if (status === 'ready') void jiraLinks().catch(err => log('jira links:', errorText(err))); // the chat's links ask again
 });
 ipcMain.handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
   if (settings.jiraUrl) webWindow(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
