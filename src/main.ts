@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import * as teams from './teams';
 import * as icon from './icon';
 import * as ai from './ai';
@@ -28,6 +29,9 @@ app.commandLine.appendSwitch('lang', 'ru-RU'); // the app's own Teams UI languag
 const data = app.getPath('userData');
 const file = (name: string) => path.join(data, name);
 const ui = (name: string) => path.join(__dirname, '..', 'ui', name);
+// A page of the app's own: a file of its ui folder, not any file: page (an HTML file dropped on a window goes there too)
+const UI_DIR = (path.join(__dirname, '..', 'ui') + path.sep).toLowerCase();
+const ownPage = (url = '') => { try { return fileURLToPath(url).toLowerCase().startsWith(UI_DIR); } catch { return false; } }; // not a file: URL
 try { if (!fs.existsSync(file('soroka.log'))) fs.renameSync(file('bridge.log'), file('soroka.log')); } catch { /* no log of the old name */ } // bridge.log until 0.9.5
 // a log past 2 MB starts over at the app's start; the one before stays as *.old.log
 for (const name of ['soroka.log', 'events.log']) try { if (fs.statSync(file(name)).size > 2 << 20) fs.renameSync(file(name), file(name.replace('.log', '.old.log'))); } catch { /* none yet */ }
@@ -40,9 +44,9 @@ const writeJson = (name: string, value: unknown) => {
   try { fs.renameSync(tmp, file(name)); } catch { fs.writeFileSync(file(name), fs.readFileSync(tmp)); fs.rmSync(tmp, { force: true }); } // held open by another program
 };
 const errorText = (e: unknown) => (e as Error).message;
-// The app's own pages only (file:): a web page in one of its windows never reaches these, wherever it navigated.
+// The app's own pages only (ownPage): a web page in one of its windows never reaches these, wherever it navigated.
 const handle = (channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...a: any[]) => unknown) =>
-  ipcMain.handle(channel, (e, ...a) => { if (!e.senderFrame?.url.startsWith('file:')) throw new Error('not allowed'); return fn(e, ...a); });
+  ipcMain.handle(channel, (e, ...a) => { if (!ownPage(e.senderFrame?.url)) throw new Error('not allowed'); return fn(e, ...a); });
 
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
@@ -1764,12 +1768,12 @@ function openWindow({ url }: Electron.HandlerDetails): Electron.WindowOpenHandle
   return { action: 'allow', overrideBrowserWindowOptions: { ...PLAIN, width: 1200, height: 820 } };
 }
 // a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray.
-// The app's own pages (file:) never leave for the web: a link there opens in the browser.
+// The app's own pages never leave for the web: a link there opens in the browser.
 app.on('web-contents-created', (_e, wc) => {
   wc.setWindowOpenHandler(openWindow);
   wc.on('will-prevent-unload', e => e.preventDefault());
   wc.on('will-navigate', (e, url) => {
-    if (!wc.getURL().startsWith('file:') || url.startsWith('file:')) return;
+    if (!ownPage(wc.getURL()) || ownPage(url)) return;
     e.preventDefault();
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
   });
