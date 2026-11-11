@@ -39,6 +39,9 @@ const writeJson = (name: string, value: unknown) => {
   try { fs.renameSync(tmp, file(name)); } catch { fs.writeFileSync(file(name), fs.readFileSync(tmp)); fs.rmSync(tmp, { force: true }); } // held open by another program
 };
 const errorText = (e: unknown) => (e as Error).message;
+// The app's own pages only (file:): a web page in one of its windows never reaches these, wherever it navigated.
+const handle = (channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...a: any[]) => unknown) =>
+  ipcMain.handle(channel, (e, ...a) => { if (!e.senderFrame?.url.startsWith('file:')) throw new Error('not allowed'); return fn(e, ...a); });
 
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
@@ -184,7 +187,8 @@ const applyAutostart = () => app.setLoginItemSettings({
 });
 
 const tokenFile = file('token.txt');
-if (!fs.existsSync(tokenFile)) { fs.mkdirSync(data, { recursive: true }); fs.writeFileSync(tokenFile, crypto.randomBytes(24).toString('hex')); }
+// a missing or short token (hand-made) is replaced: 48 hex characters
+if (!fs.existsSync(tokenFile) || fs.readFileSync(tokenFile, 'utf8').trim().length < 32) { fs.mkdirSync(data, { recursive: true }); fs.writeFileSync(tokenFile, crypto.randomBytes(24).toString('hex')); }
 const TOKEN = fs.readFileSync(tokenFile, 'utf8').trim();
 
 // One page = one thing at a time.
@@ -267,8 +271,8 @@ function hotkey(e: Electron.Event, i: Electron.Input) {
   const name = i.type === 'keyDown' && HOTKEYS[`${i.control || i.meta ? 'Ctrl+' : ''}${i.alt ? 'Alt+' : ''}${i.shift ? 'Shift+' : ''}${i.code}`];
   if (name) { e.preventDefault(); ACTIONS[name](); }
 }
-ipcMain.handle('strip:get', stripState);
-ipcMain.handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
+handle('strip:get', stripState);
+handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
 
 // "Soroka ▾": the actions for the chat in view. A layer over the window, like the settings: the window stays active and the menu
 // takes the keyboard. A pick, Esc or a click anywhere else closes it.
@@ -291,7 +295,7 @@ function closeMenu() {
   view.webContents.close();
   pushStrip();
 }
-ipcMain.handle('menu:open', (_e, x: number) => {
+handle('menu:open', (_e, x: number) => {
   if (menuView) return closeMenu();
   if (Date.now() - menuClosedAt < 300) return; // this very click took the focus from the menu and closed it: it meant "close"
   const view = menuView = new WebContentsView({ webPreferences: { preload } });
@@ -303,11 +307,11 @@ ipcMain.handle('menu:open', (_e, x: number) => {
   teamsWin.contentView.addChildView(view);
   pushStrip();
 });
-ipcMain.handle('menu:size', (_e, width: number, height: number) => {
+handle('menu:size', (_e, width: number, height: number) => {
   menuView?.setBounds({ x: menuX, y: STRIP, width: Math.ceil(width), height: Math.ceil(height) });
   menuView?.webContents.focus();
 });
-ipcMain.handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPage.focus(); ACTIONS[name]?.(); }); // '' = Esc
+handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPage.focus(); ACTIONS[name]?.(); }); // '' = Esc
 
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
@@ -345,7 +349,7 @@ function toast(item: Toast, fromQueue = false) {
   toastWin.webContents.once('did-finish-load', () => toastWin?.webContents.send('toast', payload));
   toastWin.on('closed', () => { toastWin = null; nextToast(); });
 }
-ipcMain.handle('toast:size', (_e, height: number) => { // the card measured itself: sit it in the corner and show
+handle('toast:size', (_e, height: number) => { // the card measured itself: sit it in the corner and show
   if (!toastWin) return;
   const { workArea: wa } = screen.getPrimaryDisplay();
   toastWin.setBounds({ width: 392, height: Math.ceil(height), x: wa.x + wa.width - 392, y: wa.y + wa.height - Math.ceil(height) });
@@ -353,17 +357,17 @@ ipcMain.handle('toast:size', (_e, height: number) => { // the card measured itse
   if (!toastWin.isVisible()) toastWin.showInactive(); // it also resizes a card on screen (the reply field, the menu): no second show
 });
 // the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
-ipcMain.handle('toast:focus', () => { clearTimeout(toastGuard); toastWin?.setFocusable(true); toastWin?.focus(); });
+handle('toast:focus', () => { clearTimeout(toastGuard); toastWin?.setFocusable(true); toastWin?.focus(); });
 // the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
 // and its page drew nothing until shown again, so a card sent to it never came up.
-ipcMain.handle('toast:hidden', () => toastWin?.close());
-ipcMain.handle('toast:click', (_e, action: number) => { // -1 = the card itself
+handle('toast:hidden', () => toastWin?.close());
+handle('toast:click', (_e, action: number) => { // -1 = the card itself
   const run = toastHandlers[action + 1];
   toastWin?.close();
   run?.();
 });
 
-const TEAMS_PAGE = /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//;
+const TEAMS_PAGE = teams.TEAMS_PAGE;
 function createTeamsWindow() {
   const ses = session.fromPartition('persist:teams');
   const platform = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform as string] ?? 'X11; Linux x86_64';
@@ -606,8 +610,8 @@ function closePanel() {
   pushStrip();
 }
 const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
-ipcMain.handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
-ipcMain.handle('panel:close', () => closePanel());
+handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
+handle('panel:close', () => closePanel());
 // The answers. From the tray or a toast (show) the window comes up too.
 function showDrafts(show = false) {
   if (show) showTeams();
@@ -639,7 +643,7 @@ function closeSettings() {
   // a text field saves when it loses focus: let the one being typed in save, then close the page
   void view.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {}).finally(() => view.webContents.close());
 }
-ipcMain.handle('settings:close', () => closeSettings());
+handle('settings:close', () => closeSettings());
 
 // The panel's summary tab, with the chat picked; the user chooses the period and starts it. With a result: shows a summary
 // made already (the daily digest, or one that went on after the panel was closed). From the tray or a toast the window comes up.
@@ -1028,7 +1032,7 @@ function showRing() {
   win.webContents.once('did-finish-load', () => win.webContents.send('ring', ringView()));
   win.on('closed', () => { if (ringWin === win) ringWin = null; });
 }
-ipcMain.handle('ring:size', (_e, height: number) => { // top right: the regular cards come up at the bottom right
+handle('ring:size', (_e, height: number) => { // top right: the regular cards come up at the bottom right
   if (!ringWin) return;
   const { workArea: wa } = screen.getPrimaryDisplay();
   ringWin.setBounds({ width: 392, height: Math.ceil(height), x: wa.x + wa.width - 392, y: wa.y });
@@ -1106,9 +1110,9 @@ async function pickShare(request: Electron.DisplayMediaRequestHandlerHandlerRequ
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => { shareWin = null; shareSources = []; shareDone?.(null); shareDone = null; }); // closed without a choice: nothing shared
 }
-ipcMain.handle('share:sources', e => e.sender !== shareWin?.webContents ? [] // the thumbnails show the screen: only to the picker
+handle('share:sources', e => e.sender !== shareWin?.webContents ? [] // the thumbnails show the screen: only to the picker
   : shareSources.map(s => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail.toDataURL() })));
-ipcMain.handle('share:pick', (e, id: unknown) => {
+handle('share:pick', (e, id: unknown) => {
   if (e.sender !== shareWin?.webContents) return;
   const source = shareSources.find(s => s.id === id);
   shareDone?.(source ? { video: source } : null);
@@ -1337,48 +1341,48 @@ async function sendDraft(n: string, text: string, quote = false) {
 const logged = <A extends unknown[], T>(what: string, fn: (...a: A) => T | Promise<T>) => async (...a: A) => {
   try { return await fn(...a); } catch (e) { log(`${what}:`, errorText(e)); throw e; }
 };
-ipcMain.handle('settings:get', () => settings);
-ipcMain.handle('i18n:get', () => ({ ...i18n.current(), strings: i18n.table() }));
-ipcMain.handle('settings:set', (_e, input) => updateSettings(input));
-ipcMain.handle('status:get', () => ({ teams: status, ai: aiInfo, ready: aiReady(), aiOff: settings.aiOff, quick: quickReplies(), version: app.getVersion(), check: teamsCheck,
+handle('settings:get', () => settings);
+handle('i18n:get', () => ({ ...i18n.current(), strings: i18n.table() }));
+handle('settings:set', (_e, input) => updateSettings(input));
+handle('status:get', () => ({ teams: status, ai: aiInfo, ready: aiReady(), aiOff: settings.aiOff, quick: quickReplies(), version: app.getVersion(), check: teamsCheck,
   spent: state.spent.day === new Date().toDateString() ? state.spent.tokens : 0 }));
-ipcMain.handle('ai:login', (_e, id: string) => ai.login(String(id)));
-ipcMain.handle('ai:install', (_e, id: string) => { const url = ai.installPage(String(id)); if (url) void shell.openExternal(url); }); // only the pages in the registry
-ipcMain.handle('teams:check', () => checkTeams(false));
-ipcMain.handle('report:copy', () => clipboard.writeText(report()));
-ipcMain.handle('notify:test', () => toast({ title: t('toast.test'), message: t('toast.testText'), tone: 'accent' }));
-ipcMain.handle('teams:show', () => showTeams());
-ipcMain.handle('style:learn', logged('learn style', () => learnStyle()));
-ipcMain.handle('drafts:get', () => pending());
-ipcMain.handle('draft:send', logged('send', (_e, n: string, text: string, quote: unknown) => sendDraft(n, text, quote === true)));
-ipcMain.handle('react:open', (_e, n: string) => showReactions(String(n)));
-ipcMain.handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
-ipcMain.handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
-ipcMain.handle('react:get', (_e, n: string) => ({ title: state.drafts[String(n)]?.title ?? '', recent: state.reactions }));
-ipcMain.handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, quiet: unknown) => {
+handle('ai:login', (_e, id: string) => ai.login(String(id)));
+handle('ai:install', (_e, id: string) => { const url = ai.installPage(String(id)); if (url) void shell.openExternal(url); }); // only the pages in the registry
+handle('teams:check', () => checkTeams(false));
+handle('report:copy', () => clipboard.writeText(report()));
+handle('notify:test', () => toast({ title: t('toast.test'), message: t('toast.testText'), tone: 'accent' }));
+handle('teams:show', () => showTeams());
+handle('style:learn', logged('learn style', () => learnStyle()));
+handle('drafts:get', () => pending());
+handle('draft:send', logged('send', (_e, n: string, text: string, quote: unknown) => sendDraft(n, text, quote === true)));
+handle('react:open', (_e, n: string) => showReactions(String(n)));
+handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
+handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
+handle('react:get', (_e, n: string) => ({ title: state.drafts[String(n)]?.title ?? '', recent: state.reactions }));
+handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, quiet: unknown) => {
   if (!/^[\w-]{1,80}$/.test(String(id)) || !Number.isInteger(tab) || tab < 1 || tab > 9) throw new Error('bad reaction');
   return react(String(n), String(id), tab, quiet === true);
 }));
 // the variants come back to the caller: a card asks for a snoozed draft too, which the answers list leaves out
 ipcMain.handle('draft:suggest', async (_e, n: string) => { await suggest(n); const d = state.drafts[n]; return { variants: d?.variants ?? [], error: d?.error }; });
-ipcMain.handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
-ipcMain.handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
-ipcMain.handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; } draftsChanged(); });
-ipcMain.handle('chats:list', async () => (await serial(teams.chatList)).filter(c => c.type !== 'self').map(({ id, title, type }) => ({ id, title, type })));
-ipcMain.handle('summary:run', (e, chatId: string, title: string, period: string, ask: unknown) => windowSummary(e.sender, String(chatId), String(title), String(period), askFrom(ask)));
-ipcMain.handle('summary:handoff', logged('summary handoff', async (_e: unknown, chatId: string, title: string, period: string, ask: unknown) => {
+handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
+handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
+handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; } draftsChanged(); });
+handle('chats:list', async () => (await serial(teams.chatList)).filter(c => c.type !== 'self').map(({ id, title, type }) => ({ id, title, type })));
+handle('summary:run', (e, chatId: string, title: string, period: string, ask: unknown) => windowSummary(e.sender, String(chatId), String(title), String(period), askFrom(ask)));
+handle('summary:handoff', logged('summary handoff', async (_e: unknown, chatId: string, title: string, period: string, ask: unknown) => {
   const req = await windowRequest(String(chatId), String(title), String(period), { ...askFrom(ask), plain: false }); // goes to an AI site: never the "Not to AI" chats
   if (!req) throw new Error(t(NONE[chatId] ?? 'sum.none'));
   await handoff(req, 'summaryModel');
 }));
-ipcMain.handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: string) => {
+handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: string) => {
   const d = state.drafts[n];
   if (d?.status !== 'pending') throw new Error(t('err.handled'));
   if (!d.context?.length) d.context = (await serial(() => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
   await handoff(variantsRequest(d), 'draftModel');
 }));
-ipcMain.handle('models:get', () => models());
-ipcMain.handle('models:check', logged('models', async () => { await refreshAi(); return checkModels(); }));
+handle('models:get', () => models());
+handle('models:check', logged('models', async () => { await refreshAi(); return checkModels(); }));
 // Issue keys found in messages open in Jira; nothing else is opened from here.
 // A web page in a window of the app, with Teams' session: Microsoft 365 opens signed in, and so does Jira once signed in there.
 function webWindow(url: string) {
@@ -1386,7 +1390,7 @@ function webWindow(url: string) {
   void win.loadURL(url);
   return win;
 }
-ipcMain.handle('open:jira', (_e, key: string) => openJira(String(key)));
+handle('open:jira', (_e, key: string) => openJira(String(key)));
 function openJira(key: string) { // where the links of Teams open: here or in the browser
   if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return;
   const url = `${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`;
@@ -1395,7 +1399,7 @@ function openJira(key: string) { // where the links of Teams open: here or in th
 // A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
 // its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
 const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
-ipcMain.handle('jira:issue', (_e, key: string) => jiraIssue(String(key)));
+handle('jira:issue', (_e, key: string) => jiraIssue(String(key)));
 async function jiraIssue(key: string) {
   if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return null;
   const hit = jiraSeen.get(key);
@@ -1437,12 +1441,12 @@ function jiraSaved(): { base: string; token: string; user: string } | undefined 
   try { return JSON.parse(safeStorage.decryptString(fs.readFileSync(JIRA_TOKEN))); } catch { return undefined; }
 }
 const jiraToken = (base: string) => { const s = jiraSaved(); return s?.base === base ? s.token : undefined; };
-ipcMain.handle('jira:token', () => {
+handle('jira:token', () => {
   const s = jiraSaved();
   return s ? { user: s.user, other: s.base !== settings.jiraUrl.replace(/\/+$/, ''), bad: jiraTokenBad } : null;
 });
 // Saves a token Jira takes for the address in the settings ('' removes it). Only from the settings page.
-ipcMain.handle('jira:tokenSet', async (e, value: unknown) => {
+handle('jira:tokenSet', async (e, value: unknown) => {
   if (e.sender !== settingsView?.webContents) return;
   if (value === '') fs.rmSync(JIRA_TOKEN, { force: true });
   else {
@@ -1462,25 +1466,31 @@ ipcMain.handle('jira:tokenSet', async (e, value: unknown) => {
   jiraSeen.clear();
   if (status === 'ready') void jiraLinks().catch(err => log('jira links:', errorText(err))); // the chat's links ask again
 });
-ipcMain.handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
+handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
   if (settings.jiraUrl) webWindow(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
 });
-ipcMain.handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
-ipcMain.handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
+handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
+handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
 
 // ---------- local API for Claude sessions (tb.mjs); header x-token = token.txt ----------
 const json = (res: http.ServerResponse, code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); };
 const body = (req: http.IncomingMessage) => new Promise<any>((ok, no) => {
-  let b = ''; req.setEncoding('utf8'); req.on('data', x => (b += x)); req.on('error', no);
+  let b = '', big = false; req.setEncoding('utf8'); req.on('error', no);
+  // a message, not a file: past 64 KB the rest is read and dropped, and the answer says why
+  req.on('data', x => { if (big) return; b += x; if (b.length > 64 * 1024) { big = true; b = ''; no(Object.assign(new Error('body too large'), { status: 413 })); } });
   req.on('end', () => { try { ok(JSON.parse(b || '{}')); } catch { no(Object.assign(new Error('bad json'), { status: 400 })); } });
 });
 const need = (ok: unknown, what: string) => { if (!ok) throw Object.assign(new Error(`${what} required`), { status: 400 }); };
+// The token compared in constant time; the request from this computer's programs only: no browser page (it sends an Origin)
+// and no other host name pointed at 127.0.0.1 (a site's own DNS name, to reach the API through the user's browser).
+const tokenOk = (given: unknown) => typeof given === 'string' && given.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN));
 
 function startApi() {
   const PORT = Number(process.env.PORT ?? 8765);
   http.createServer(async (req, res) => {
     try {
-      if (req.headers['x-token'] !== TOKEN) return json(res, 401, { error: 'bad token' });
+      if (req.headers.origin || ![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host ?? '')) return json(res, 403, { error: 'local programs only' });
+      if (!tokenOk(req.headers['x-token'])) return json(res, 401, { error: 'bad token' });
       if (settings.aiOff) return json(res, 403, { error: t('toast.aiOff') }); // "Do not use AI": AI sessions get nothing from Teams either
       if (status !== 'ready') return json(res, 503, { error: `teams is not ready: ${status}` });
       const url = new URL(req.url ?? '/', 'http://x');
@@ -1517,7 +1527,7 @@ function startApi() {
       }
       if (route === 'POST /draft') { // an answer card the user sends or rejects; nothing leaves without their click
         const { chat, text, note } = await body(req);
-        need(chat && text?.trim(), 'chat and text');
+        need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
         const c = await serial(() => teams.findChat(chat));
         const n = addDraft({ chatId: c.id, title: c.title, note: note ?? c.title, last: '', text });
         toast({ title: t('toast.claudeSuggests'), message: `${c.title}: ${text}`, tone: 'accent', long: true, click: () => showDrafts(true) });
@@ -1543,8 +1553,23 @@ app.on('second-instance', showTeams);
 app.on('window-all-closed', () => { /* keep running in the tray */ });
 // whatever still holds the quit back after 3 s (twice it was a window: a sign-in popup, a toast opened while closing), it ends anyway
 app.on('before-quit', () => { quitting = true; setTimeout(() => { log('quit held up: exiting'); app.exit(0); }, 3000); });
-// a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray
-app.on('web-contents-created', (_e, wc) => wc.on('will-prevent-unload', e => e.preventDefault()));
+// a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray.
+// The app's own pages (file:) never leave for the web: a link there opens in the browser.
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-prevent-unload', e => e.preventDefault());
+  wc.on('will-navigate', (e, url) => {
+    if (!wc.getURL().startsWith('file:') || url.startsWith('file:')) return;
+    e.preventDefault();
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+  });
+});
+// A web page in a window of the app has no address bar: its title says whose page it is ("login.microsoftonline.com — Sign in").
+app.on('browser-window-created', (_e, win) => win.webContents.on('page-title-updated', (e, title) => {
+  const url = win.webContents.getURL();
+  if (!/^https?:/.test(url)) return;
+  e.preventDefault();
+  win.setTitle(`${new URL(url).host} — ${title}`);
+}));
 app.whenReady().then(async () => {
   app.dock?.hide();
   if (!settings.language) settings.language = i18n.systemLang(app.getSystemLocale()); // saved with the next settings change

@@ -14,6 +14,8 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // Teams may render emoji as images, so text checks compare without them.
 const plain = (t: string) => t.replace(/[\p{Extended_Pictographic}️​-‍⁠﻿]/gu, '').replace(/\s+/g, ' ').trim();
 
+// Teams' own pages: the app talks to these only.
+export const TEAMS_PAGE = /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//;
 let wc: WebContents;
 const cdp = (method: string, params: object = {}) => wc.debugger.sendCommand(method, params);
 
@@ -151,10 +153,15 @@ export async function chatList(): Promise<Chat[]> {
 // Calls onChange soon after the set of unread chats or their last messages changes: Teams updates the page itself,
 // a MutationObserver in the page notices and calls a DevTools binding. Install again after every page load.
 // Page → app calls go through DevTools bindings; one listener serves them all.
+// Only Teams' own page may call them: a binding stays in the page across navigations, to a sign-in page or wherever a link leads.
 const bindings = new Map<string, (payload: string) => void>();
 async function bind(name: string, fn: (payload: string) => void) {
-  if (!wc.debugger.listenerCount('message'))
-    wc.debugger.on('message', (_e, method, params) => { if (method === 'Runtime.bindingCalled') bindings.get(params.name)?.(params.payload); });
+  const page = wc;
+  if (!page.debugger.listenerCount('message'))
+    page.debugger.on('message', (_e, method, params) => {
+      if (method !== 'Runtime.bindingCalled' || !TEAMS_PAGE.test(page.getURL())) return;
+      try { bindings.get(params.name)?.(String(params.payload)); } catch { /* a malformed call: nothing to do */ }
+    });
   bindings.set(name, fn);
   await cdp('Runtime.addBinding', { name });
 }
@@ -183,7 +190,12 @@ export async function watchChats(onChange: () => void) {
 export type Ring = { kind: 'call' | 'meeting'; title: string; message: string; buttons: { label: string; reject: boolean }[]; outline: string };
 const RING = 'tbRing';
 export async function watchRings(onChange: (ring: Ring | null) => void) {
-  await bind(RING, payload => onChange(payload ? JSON.parse(payload) : null));
+  await bind(RING, payload => {
+    const r = payload ? JSON.parse(payload) : null;
+    if (!r) return onChange(null);
+    if (Array.isArray(r.buttons)) onChange({ kind: r.kind === 'call' ? 'call' : 'meeting', title: String(r.title ?? ''), message: String(r.message ?? ''),
+      buttons: r.buttons.map((b: { label?: unknown; reject?: unknown }) => ({ label: String(b?.label ?? ''), reject: b?.reject === true })), outline: String(r.outline ?? '') });
+  });
   await run(name => {
     const w = window as any;
     w.__tbRing?.disconnect();
@@ -262,8 +274,12 @@ export async function watchCall(onChange: (on: boolean) => void) {
 // base '' takes it all away.
 const JIRA = 'tbJira', JIRA_OPEN = 'tbJiraOpen';
 export async function watchJira(base: string, onKeys: (keys: string[]) => void, onOpen: (key: string) => void) {
-  await bind(JIRA, payload => onKeys(JSON.parse(payload)));
-  await bind(JIRA_OPEN, key => onOpen(key));
+  await bind(JIRA, payload => {
+    const keys: unknown = JSON.parse(payload);
+    if (Array.isArray(keys)) onKeys(keys.filter(k => typeof k === 'string' && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(k)).slice(0, 50));
+  });
+  let opened = 0; // one ticket a second at most, whatever the page sends
+  await bind(JIRA_OPEN, key => { if (Date.now() - opened > 1000) { opened = Date.now(); onOpen(key); } });
   await run(([name, openName, base]) => {
     const w = window as any;
     w.__tbJira?.disconnect();
