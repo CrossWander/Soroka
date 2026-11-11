@@ -355,11 +355,12 @@ function createTeamsWindow() {
   const ses = session.fromPartition('persist:teams');
   const platform = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform as string] ?? 'X11; Linux x86_64';
   ses.setUserAgent(`Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`, 'ru-RU,ru');
-  // Calls and meetings are taken in this window: Teams' own pages get the microphone, camera and speaker choice.
+  // Calls and meetings are taken in this window: Teams' own pages get the microphone, camera and speaker choice, and
+  // writing to the clipboard (its "Copy link"); reading it they do not get.
   // Its notifications stay off (the app shows its own); screen sharing needs a picker the app does not have yet.
-  const MEDIA = ['media', 'speaker-selection', 'fullscreen'];
+  const ALLOWED = ['media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write'];
   ses.setPermissionRequestHandler((_wc, permission, done, details) =>
-    done(MEDIA.includes(permission) && /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//.test(details.requestingUrl)));
+    done(ALLOWED.includes(permission) &&/^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//.test(details.requestingUrl)));
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
     webPreferences: { preload } });
   teamsWin.removeMenu();
