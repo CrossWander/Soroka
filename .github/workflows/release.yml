@@ -1,0 +1,43 @@
+# A tag vX.Y.Z builds the Windows installer and publishes it as the release "Soroka X.Y.Z".
+# The tag must match package.json's version. The installer is not code-signed.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # to create the release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: The tag matches the version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, package.json $version: bump the version or fix the tag"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Build the installer
+        shell: bash
+        run: npm run dist -- --publish never
+
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "release/Soroka-Setup-$VERSION.exe" --title "Soroka $VERSION" --generate-notes

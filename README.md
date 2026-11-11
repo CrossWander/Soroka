@@ -92,7 +92,7 @@ Without any AI, Soroka still notifies, lets you reply by hand and makes the extr
 
 ## Install
 
-1. Download `Soroka Setup <version>.exe` from the Releases page, or build it from source (below).
+1. Download `Soroka-Setup-<version>.exe` from the Releases page, or build it from source (below).
 2. Run it. It installs for the current user, without admin rights. The installer is not code-signed, so Windows SmartScreen may warn: choose «More info» → «Run anyway».
 3. Sign in to Teams in the window that opens. Soroka then sits in the tray. Open the settings from the tray icon or with ⚙ in the window's title bar.
 
@@ -101,12 +101,14 @@ Without any AI, Soroka still notifies, lets you reply by hand and makes the extr
 ```bash
 npm ci
 npm start          # run from source
-npm run dist       # build release/Soroka Setup <version>.exe
+npm run dist       # build release/Soroka-Setup-<version>.exe
 ```
 
-`release/Soroka Setup <version>.exe /S` installs silently.
+`release/Soroka-Setup-<version>.exe /S` installs silently.
 
 If you run it from a terminal inside VS Code, remove `ELECTRON_RUN_AS_NODE` first. VS Code sets it, and with it Electron starts as plain Node.
+
+Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches the version in `package.json`, and [the release workflow](.github/workflows/release.yml) builds the installer and publishes it on the Releases page.
 
 ## Local API for AI sessions
 

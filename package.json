@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "tsc && electron .",
     "dist": "tsc && npm run icon && electron-builder --win nsis",
-    "icon": "node -e \"const fs = require('fs'), i = require('./dist/icon'); fs.writeFileSync('build/icon.png', i.png(256)); fs.writeFileSync('build/icon.ico', i.ico())\""
+    "icon": "node -e \"const fs = require('fs'), i = require('./dist/icon'); fs.mkdirSync('build', { recursive: true }); fs.writeFileSync('build/icon.png', i.png(256)); fs.writeFileSync('build/icon.ico', i.ico())\""
   },
   "devDependencies": {
     "@types/node": "26.6.6",
@@ -43,6 +43,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "artifactName": "Soroka-Setup-${version}.${ext}",
       "oneClick": true,
       "perMachine": false,
       "shortcutName": "Soroka",
