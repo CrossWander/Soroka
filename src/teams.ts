@@ -101,6 +101,7 @@ const KEYS: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
   Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
   Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 },
   End: { key: 'End', code: 'End', windowsVirtualKeyCode: 35 },
+  Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
   Delete: { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 },
   a: { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 },
 };
@@ -133,8 +134,11 @@ async function typeLine(line: string) {
     if (!emoji) { await insertText(part); continue; }
     const [code, id] = emoji;
     for (const ch of `:${code}`) await typeChar(ch);
-    for (const end = Date.now() + 6000; (await suggestionIndex(id)) < 0; await sleep(250))
-      if (Date.now() > end) throw fail(500, `Teams emoji "${id}" not offered for :${code}, not sent`); // callers clear the box
+    if (!(await waitFor(([s, id]) => [...document.querySelectorAll(s)].some(o => (o.querySelector('img')?.getAttribute('src') || '').includes(`/emoticons/${id}/`)), [SUGGESTION, id], 6000))) {
+      for (let i = 0; i <= code.length; i++) await press('Backspace'); // Teams no longer offers its picture: the plain emoji instead
+      await insertText(part);
+      continue;
+    }
     await click(SUGGESTION, await suggestionIndex(id)); // a click, never Enter: Enter without the list would send a half-typed message
     // the list stays ~0.9 s after the click, and while it is there Teams drops an Enter: the message would not go
     await waitFor(s => !document.querySelector(s), '#autocomplete-picker-list', 3000);
@@ -530,12 +534,18 @@ export const boxText = (): Promise<string> => run(b => {
   return (box?.innerText ?? '').replace((box?.querySelector('card') as HTMLElement | null)?.innerText || '\0', '');
 }, BOX);
 const boxQuote = () => exists(`${BOX} card`, 0); // "Reply with quote" puts the quoted message in the box as a card
+// A picture (or an emoji: Teams draws them as pictures too) in the box, or a file attached under it: the user's, not to go along.
+const boxHasFiles = (): Promise<boolean> => run(([b, files]) => !!document.querySelector(b)?.querySelector('img') || !!document.querySelector(files), [BOX, ATTACHED]);
+// ponytail: Teams' bundle names its file cards "file-chiclet" and "attachments-…"; not yet seen with a file attached live
+const ATTACHED = '[data-tid="chat-pane-compose-message-footer"] :is([data-tid*="chiclet" i], [data-tid*="attachment" i])';
 
 // ---------- a message's hover bar: reactions and quoted replies ----------
 // The other side's latest message in the open chat: the one a toast announced, or a newer one.
 const theirLast = async () => (await lastMessages(30)).reverse().find(m => !m.mine);
-// Rests the mouse on a message, so Teams shows its hover bar, and clicks a button of that bar.
-async function hoverBar(mid: string, sel: string) {
+// Rests the mouse on a message, so Teams shows its hover bar, and clicks a button of that bar. keepOn: a toggle (a quick
+// reaction) already on is left alone — a click would take the user's reaction off.
+// ponytail: "on" read from aria-pressed / aria-checked, as Fluent's toggle buttons mark it; not yet seen on a reacted message
+async function hoverBar(mid: string, sel: string, keepOn = false) {
   for (let attempt = 1; ; attempt++) {
     const at = await run(id => {
       const e = document.getElementById(`message-body-${id}`);
@@ -547,7 +557,10 @@ async function hoverBar(mid: string, sel: string) {
     if (!at) throw fail(404, 'message not found in the chat');
     await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 }); // the bar shows on entering the message
     await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
-    if (await exists(sel, 3000)) return click(sel);
+    if (await exists(sel, 3000)) {
+      if (keepOn && await run(s => { const b = document.querySelector(s); return b?.getAttribute('aria-pressed') === 'true' || b?.getAttribute('aria-checked') === 'true'; }, sel)) return;
+      return click(sel);
+    }
     if (attempt === 3) throw fail(502, 'Teams did not show the message actions');
   }
 }
@@ -560,7 +573,7 @@ export async function react(c: ChatRef, emoticon: string, tab: number) {
   await openChat(c);
   const m = await theirLast();
   if (!m) throw fail(404, 'no message from the other side in this chat');
-  if (QUICK[emoticon]) { await hoverBar(m.id, `[data-tid="message-actions-${QUICK[emoticon]}"]`); return { chat: c.title, reaction: emoticon }; }
+  if (QUICK[emoticon]) { await hoverBar(m.id, `[data-tid="message-actions-${QUICK[emoticon]}"]`, true); return { chat: c.title, reaction: emoticon }; }
   await hoverBar(m.id, '[data-tid="expanded-reactions-picker-entry"]');
   const button = `[data-tid="emoticon-button-${emoticon}"]`;
   if (!(await exists('[data-tid^="emoji-categories-tab-"]', 5000))) throw fail(502, 'the reactions picker did not open');
@@ -576,7 +589,7 @@ export async function send(c: ChatRef, text: string, { replace, quote }: { repla
   await openChat(c);
   await click(BOX);
   const had = plain(await boxText());
-  if (had !== plain(replace ?? '') || (!replace && await boxQuote()))
+  if (had !== plain(replace ?? '') || (!replace && await boxQuote()) || await boxHasFiles()) // a picture or a file would go along
     throw Object.assign(fail(409, replace ? 'the text in the compose box has changed, not sent' : 'the compose box has your unsent text, not sent'), { boxTaken: !replace });
   if (replace) await clearBox();
   if (quote) {
@@ -595,18 +608,19 @@ export async function send(c: ChatRef, text: string, { replace, quote }: { repla
       if (lines[i]) await typeLine(lines[i]);
     }
   } catch (e) { await press('Escape'); await clearBox(); throw e; }
-  const typed = plain(await boxText());
-  if (typed !== plain(text)) {
+  if (plain(await boxText()) !== plain(text)) { // never the text itself in the error: errors go to the log
     await clearBox();
-    throw fail(500, `compose box mismatch, not sent: ${typed}`);
+    throw fail(500, 'the compose box does not hold the text as typed, not sent');
   }
   if (!(await isOpen(c))) throw fail(409, 'chat switched before send, not sent');
   if (!(await ensureBoxFocus())) throw fail(500, 'compose box lost the focus, not sent');
   await press('Enter');
-  const probe = plain(lines.find(l => plain(l)) ?? '').slice(0, 40);
-  const seen = await waitFor(t => [...document.querySelectorAll('[id^="message-body-"]')].slice(-3).some(e =>
-    (e.getAttribute('aria-label') || (e as HTMLElement).innerText).replace(/[\p{Extended_Pictographic}️]/gu, '').replace(/\s+/g, ' ').includes(t)), probe);
-  if (!seen) throw fail(504, 'sent, but not seen in chat yet: check Teams before retrying');
+  // Teams empties the box as the message goes: then it went, however long the chat takes to show it. Still there: Teams did not
+  // take the Enter, and the text (the app's own) is wiped, so sending again cannot double it.
+  if (!(await waitFor(b => !(document.querySelector(b) as HTMLElement | null)?.innerText.trim(), BOX, 15_000))) {
+    await clearBox();
+    throw fail(500, 'Teams did not take the message, not sent');
+  }
   return { chat: c.title, sent: text };
 }
 
@@ -641,11 +655,11 @@ export async function gifSearch(query: string, n: number) {
   return list.slice(0, n);
 }
 
-const boxHasImage = (): Promise<boolean> => run(b => !!document.querySelector(b)?.querySelector('img'), BOX);
-// With `text` the GIF goes in after it, as one message.
+// With `text` the GIF goes in after it, as one message. The user's own unsent text, picture or file is never sent along or wiped.
 export async function sendGif(c: ChatRef, query: string, src?: string, text?: string) {
   await openChat(c);
-  if (await boxHasImage()) throw fail(409, 'compose box already has an image, not sent');
+  if (plain(await boxText()) || await boxQuote() || await boxHasFiles())
+    throw Object.assign(fail(409, 'the compose box has your unsent text, not sent'), { boxTaken: true });
   let label: string;
   try {
     if (text) { await click(BOX); await typeLine(text); }
@@ -656,13 +670,13 @@ export async function sendGif(c: ChatRef, query: string, src?: string, text?: st
     await click(RESULTS, i);
     if (!(await waitFor(b => !!document.querySelector(b)?.querySelector('img[src*="giphy"]'), BOX, 10_000))) throw fail(502, 'GIF did not reach the compose box, not sent');
     const typed = plain(await run(b => (document.querySelector(b) as HTMLElement | null)?.innerText ?? '', BOX));
-    if (typed !== plain(text ?? '')) throw fail(500, `compose box mismatch, not sent: ${typed}`);
+    if (typed !== plain(text ?? '')) throw fail(500, 'the compose box does not hold the text as typed, not sent');
     if (!(await isOpen(c))) throw fail(409, 'chat switched before send, not sent');
   } catch (e) { await press('Escape'); await clearBox(); throw e; }
   if (!(await ensureBoxFocus())) throw fail(500, 'compose box lost the focus, not sent');
   await press('End', CTRL);
   await press('Enter');
-  if (!(await waitFor(b => !document.querySelector(b)?.querySelector('img'), BOX))) throw fail(504, 'GIF still in compose box: check Teams before retrying');
+  if (!(await waitFor(b => !document.querySelector(b)?.querySelector('img'), BOX))) { await clearBox(); throw fail(500, 'Teams did not take the GIF, not sent'); }
   return { chat: c.title, gif: label };
 }
 

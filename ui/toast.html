@@ -190,12 +190,13 @@
     say(v.error || t('toast.replyReady'), !!v.error);
     if (!$('reply').hidden && !$('field').value && variants.length) $('field').value = variants[next++];
   });
-  async function send() {
+  async function send() { // once: a second Enter while it goes out does nothing
     const text = $('field').value.trim();
+    if (sending) return;
     if (!text) return $('field').focus();
-    busy(true); $('send').classList.add('spin'); say(t('card.sending'));
+    sending = true; busy(true); $('send').classList.add('spin'); say(t('card.sending'));
     try { await bridge.invoke('draft:send', n, text, false); leave(); }
-    catch (err) { busy(false); $('send').classList.remove('spin'); say(failed(err), true); }
+    catch (err) { sending = false; busy(false); $('send').classList.remove('spin'); say(failed(err), true); }
   }
   $('send').onclick = e => { e.stopPropagation(); send(); };
   $('field').onkeydown = e => {

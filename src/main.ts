@@ -1424,15 +1424,18 @@ function startTimer() {
   timer = setInterval(() => void tick(), 30_000); // a safety net: changes come at once through teams.watchChats
 }
 
+// One send per card at a time: a second Enter or click while it goes out is turned down, never a second message.
+const sending = new Set<string>();
 async function sendDraft(n: string, text: string, quote = false) {
   const d = state.drafts[n];
   if (d?.status !== 'pending') throw new Error(t('err.handled'));
   if (!text.trim()) throw new Error(t('err.empty'));
+  if (sending.has(n)) throw new Error(t('err.sending'));
+  sending.add(n);
   try {
-    // the AI's text gets the 🤖 label; text the user rewrote is the user's own words
-    const fromAi = text === d.text && !!d.text || !!d.variants?.includes(text);
-    await serial(() => teams.send({ id: d.chatId, title: d.title }, fromAi ? withLabel(text) : text,
-      d.improve ? { replace: d.last } : { quote }));
+    // the AI's text gets the 🤖 label; text the user rewrote is the user's own words, and so is the app's ready nudge
+    const fromAi = text === d.text && !!d.text && !d.nudge || !!d.variants?.includes(text);
+    await inChat(d.chatId, () => teams.send({ id: d.chatId, title: d.title }, fromAi ? withLabel(text) : text, d.improve ? { replace: d.last } : { quote }));
     d.status = 'sent';
     delete d.error; delete d.context;
     toast({ title: t('toast.sent'), message: `${d.title}: ${text}` });
@@ -1441,7 +1444,7 @@ async function sendDraft(n: string, text: string, quote = false) {
     d.error = errorText(err);
     toast({ title: t('toast.notSent'), message: `${d.title}: ${d.error}`, tone: 'error', long: true, click: () => showDrafts(true) });
     throw err;
-  } finally { draftsChanged(); }
+  } finally { sending.delete(n); draftsChanged(); }
 }
 
 // ---------- IPC for the app's own windows ----------
