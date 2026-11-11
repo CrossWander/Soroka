@@ -433,6 +433,8 @@ function createTeamsWindow() {
   // Its notifications stay off (the app shows its own).
   const ALLOWED = ['media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write', 'display-capture'];
   ses.setPermissionRequestHandler((_wc, permission, done, details) => done(ALLOWED.includes(permission) && TEAMS_PAGE.test(details.requestingUrl)));
+  // checks too, which Electron allows by default: the web pages of chat links open in this session and get none
+  ses.setPermissionCheckHandler((_wc, _permission, origin) => TEAMS_PAGE.test(`${origin}/`));
   ses.setDisplayMediaRequestHandler(pickShare);
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
     webPreferences: { preload } });
@@ -481,16 +483,7 @@ function newTeamsPage() {
     chatInView = parts.length > 2 ? parts.slice(1, -1).join(' | ') : '';
     pushStrip();
   });
-  // Microsoft's sign-in, and links (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so
-  // Microsoft 365 opens signed in. Only web pages: other schemes would start programs.
-  // "Links: in the browser" sends the pages to the default browser; Microsoft's sign-in stays here, Teams needs it, and so
-  // do the apps of Teams' Office menu (the dotted grid), whose addresses carry the account: login_hint.
-  page.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow' };
-    if (!/^https?:\/\//.test(url)) return { action: 'deny' };
-    if (settings.links === 'browser' && !/[?&]login_hint=/.test(url)) { void shell.openExternal(url); return { action: 'deny' }; }
-    return { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true } };
-  });
+  // its window.open: openWindow, set for every page (web-contents-created)
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
   // Teams marks its header as a window drag area (app-region), for its own desktop app. In this frameless window Windows
@@ -1755,9 +1748,25 @@ app.on('second-instance', showTeams);
 app.on('window-all-closed', () => { /* keep running in the tray */ });
 // whatever still holds the quit back after 3 s (twice it was a window: a sign-in popup, a toast opened while closing), it ends anyway
 app.on('before-quit', () => { quitting = true; setTimeout(() => { log('quit held up: exiting'); app.exit(0); }, 3000); });
+// The windows pages open (window.open), Teams' and those of the pages opened from it alike. Microsoft's sign-in, and links
+// (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so Microsoft 365 opens signed in.
+// Only web pages: other schemes would start programs. "Links: in the browser" sends the pages to the default browser;
+// Microsoft's sign-in stays here, Teams needs it, and so do the apps of Teams' Office menu (the dotted grid), whose
+// Microsoft addresses carry the account: login_hint. A page asks for no frameless, transparent or always-on-top window,
+// which could pass for a card of the app or a sign-in prompt: its window is a plain one, its address in the title.
+const MICROSOFT = /^https:\/\/([\w-]+\.)*(microsoft\.com|microsoft365\.com|office\.com|office365\.com|sharepoint\.com|live\.com|cloud\.microsoft)\//;
+const PLAIN: Electron.BrowserWindowConstructorOptions = { frame: true, transparent: false, alwaysOnTop: false, skipTaskbar: false, fullscreen: false,
+  kiosk: false, titleBarStyle: 'default', icon: APP_ICON, autoHideMenuBar: true };
+function openWindow({ url }: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse {
+  if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow', overrideBrowserWindowOptions: PLAIN };
+  if (!/^https?:\/\//.test(url)) return { action: 'deny' };
+  if (settings.links === 'browser' && !(MICROSOFT.test(url) && /[?&]login_hint=/.test(url))) { void shell.openExternal(url); return { action: 'deny' }; }
+  return { action: 'allow', overrideBrowserWindowOptions: { ...PLAIN, width: 1200, height: 820 } };
+}
 // a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray.
 // The app's own pages (file:) never leave for the web: a link there opens in the browser.
 app.on('web-contents-created', (_e, wc) => {
+  wc.setWindowOpenHandler(openWindow);
   wc.on('will-prevent-unload', e => e.preventDefault());
   wc.on('will-navigate', (e, url) => {
     if (!wc.getURL().startsWith('file:') || url.startsWith('file:')) return;
