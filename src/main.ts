@@ -28,9 +28,16 @@ const data = app.getPath('userData');
 const file = (name: string) => path.join(data, name);
 const ui = (name: string) => path.join(__dirname, '..', 'ui', name);
 try { if (!fs.existsSync(file('soroka.log'))) fs.renameSync(file('bridge.log'), file('soroka.log')); } catch { /* no log of the old name */ } // bridge.log until 0.9.5
+// a log past 2 MB starts over at the app's start; the one before stays as *.old.log
+for (const name of ['soroka.log', 'events.log']) try { if (fs.statSync(file(name)).size > 2 << 20) fs.renameSync(file(name), file(name.replace('.log', '.old.log'))); } catch { /* none yet */ }
 const log = (...parts: unknown[]) => fs.appendFileSync(file('soroka.log'), `${new Date().toISOString()} ${parts.join(' ')}\n`);
 const readJson = <T>(name: string, fallback: T): T => { try { return { ...fallback, ...JSON.parse(fs.readFileSync(file(name), 'utf8')) }; } catch { return { ...fallback }; } };
-const writeJson = (name: string, value: unknown) => fs.writeFileSync(file(name), JSON.stringify(value, null, 2));
+// a new file, then a rename: a crash in the middle leaves the old one whole, not half a file
+const writeJson = (name: string, value: unknown) => {
+  const tmp = file(`${name}.tmp`);
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  try { fs.renameSync(tmp, file(name)); } catch { fs.writeFileSync(file(name), fs.readFileSync(tmp)); fs.rmSync(tmp, { force: true }); } // held open by another program
+};
 const errorText = (e: unknown) => (e as Error).message;
 
 // ---------- settings & state ----------
@@ -128,6 +135,9 @@ ai.usage.onSpent = tokens => {
   saveState();
 };
 for (const d of Object.values(state.drafts)) delete d.busy; // a run cut short by a restart
+// the state stays small: handled cards a week, the last message seen of the 300 latest chats
+for (const [n, d] of Object.entries(state.drafts)) if (d.status !== 'pending' && Date.now() - d.at > 7 * 86_400_000) delete state.drafts[n];
+state.seen = Object.fromEntries(Object.entries(state.seen).slice(-300));
 const saveState = () => writeJson('state.json', state);
 const waiting = () => Object.entries(state.drafts).filter(([, d]) => d.status === 'pending'); // snoozed ones too
 // The cards in the answers window: a snoozed one stays out until its time
