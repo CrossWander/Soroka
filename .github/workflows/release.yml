@@ -1,26 +1,34 @@
 # A tag vX.Y.Z builds the Windows installer and publishes it as the release "Soroka X.Y.Z".
 # The tag must match package.json's version. The installer is not code-signed.
+# The build runs the code of every npm package it installs, so it gets a read-only token, kept out of .git/config;
+# only the release job, which runs no package, may write. Actions are pinned to commits: a moved tag changes nothing here.
 name: Release
 
 on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write # to create the release
+permissions: {}
 
 jobs:
-  windows:
+  build:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
 
       - name: The tag matches the version
+        id: version
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
@@ -28,7 +36,7 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME, package.json $version: bump the version or fix the tag"
             exit 1
           fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
 
@@ -36,8 +44,25 @@ jobs:
         shell: bash
         run: npm run dist -- --publish never
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer
+          path: release/Soroka-Setup-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: installer
+
       - name: Publish the release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "release/Soroka-Setup-$VERSION.exe" --title "Soroka $VERSION" --generate-notes
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: gh release create "$GITHUB_REF_NAME" "Soroka-Setup-$VERSION.exe" --title "Soroka $VERSION" --generate-notes
