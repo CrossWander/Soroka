@@ -33,8 +33,9 @@ if (cmd === 'chats') {
   const r = await call(`/messages?chat=${encodeURIComponent(a)}&n=${Number(b ?? 20)}`);
   console.log(`# ${r.chat}`);
   for (const m of r.messages) console.log(`${new Date(Number(m.id)).toLocaleString('uk-UA')} | ${m.mine ? 'Я' : m.author}${m.replyTo ? ` (↩ ${m.replyTo}: «${m.quote}»)` : ''}: ${m.text}`);
-} else if (cmd === 'summary' && a) {
-  const r = await call(`/summary?chat=${encodeURIComponent(a)}&n=${Number(b ?? 100)}${c === 'plain' ? '&plain' : ''}`); // plain: by rules, no AI
+} else if (cmd === 'summary' && a) { // summary "<chat>" [n] [plain], or summary "<chat>" plain
+  const plain = b === 'plain' || c === 'plain', n = b && b !== 'plain' ? Number(b) : 100;
+  const r = await call(`/summary?chat=${encodeURIComponent(a)}&n=${n}${plain ? '&plain' : ''}`); // plain: by rules, no AI
   console.log(`# ${r.chat}
 ${r.summary}`);
 } else if (cmd === 'send' && a && b) { // the app asks the user in a card first; waits up to 3 minutes for the click
