@@ -117,7 +117,8 @@ const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string
   spent: { day: '', tokens: 0 }, // spent: Claude's tokens today, as Claude Code reports them
   activitySeen: [] as string[], reactions: [] as string[], // activitySeen: Activity items already looked at; reactions: the user's recent ones
   asked: {} as Record<string, { title: string; text: string; at: number; told?: boolean }>, // asked: per chat, the user's own question still unanswered
-  checkWarned: '' }); // checkWarned: "version|missing parts" the self-check last warned about
+  checkWarned: '', // checkWarned: "version|missing parts" the self-check last warned about
+  callBounds: null as Electron.Rectangle | null }); // callBounds: where the user left the call window
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
 ai.usage.onSpent = tokens => {
@@ -147,6 +148,7 @@ function updateSettings(input: Record<string, unknown>) {
   if (settings.theme !== old.theme) void applyTheme();
   if (settings.aiOff !== old.aiOff) void refreshAi();
   if (settings.officeMenu !== old.officeMenu) void applyOfficeMenu();
+  if (settings.jiraUrl !== old.jiraUrl && status === 'ready') void jiraLinks().catch(e => log('jira links:', errorText(e)));
   if (settings.language !== old.language) { // every window of the app redraws in the new language
     i18n.setLang(settings.language as i18n.Lang);
     for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin) w.webContents.reload();
@@ -433,6 +435,7 @@ const watch = () => Promise.all([
   teams.watchChats(() => { log('unread chats changed'); void tick(); }), // the timer still checks if this fails
   teams.watchRings(onRing),
   teams.watchCall(onCall),
+  jiraLinks(),
 ]).catch(e => log('watch:', errorText(e)));
 // One click on the tray icon: the Teams window, as in the Teams app.
 function showTeams() {
@@ -1028,38 +1031,46 @@ async function ringAction(i: number) {
   if (!r || !b) return closeRing();
   if (r.live) await teams.ringClick(i); // not through serial(): a call cannot wait for a summary that reads history
   else if (!b.reject) await serial(() => teams.joinMeeting(`${r.title} ${r.message}`));
-  // an accepted call comes up in its own window (onCall); a meeting first shows Teams' join screen in the main one
-  if (b.reject) { /* nothing to show */ }
-  else if (r.live && r.kind === 'call') setTimeout(() => { if (!callWin) showTeams(); }, 5000); // it never came up as a call: show where it is
-  else showTeams();
+  // an accepted call, or a meeting's join screen, comes up in its own window (onCall): if it never does, show where it is
+  if (!b.reject) setTimeout(() => { if (!callWin) showTeams(); }, 5000);
   closeRing();
 }
 
 // ---------- a call in a window of its own, as in the Teams app ----------
 // The call lives in the Teams page, so the whole page moves to the call window, and the main window gets a fresh page
-// for the chats. The second page lives only while the call does: the window closes when the call ends, closing it leaves the call.
+// for the chats. It moves already at a meeting's join screen, as Teams' own app opens its meeting window there.
+// The second page lives only while the call does: the window closes when the call ends, closing it leaves the call.
 let callWin: BaseWindow | null = null;
 let callPage: Electron.WebContents | null = null;
 function onCall(on: boolean) { // either page may report: the main one a call starting, the call window's one its end
   if (on && !callWin) popOutCall();
-  else if (!on && callWin) void callPage!.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.HANGUP)})`)
-    .then(still => { if (!still) callWin?.close(); }, () => callWin?.close());
+  // looked at again a few seconds on: between the join screen and the call itself neither may be in the page for a moment
+  else if (!on && callWin) setTimeout(() => void callPage?.executeJavaScript(`!!document.querySelector(${JSON.stringify(teams.CALL_UI)})`)
+    .then(still => { if (!still) callWin?.close(); }, () => callWin?.close()), 3000);
 }
 function popOutCall() {
   log('call: to its own window');
   const view = teamsView;
   closeSettings();
   teamsWin.contentView.removeChildView(view);
-  const win = callWin = new BaseWindow({ width: 1000, height: 680, show: false, title: t('call.window'), icon: APP_ICON });
+  // where the user left it, if that is still on a screen; the first time a small one in the middle, as Teams' own
+  const was = state.callBounds, wa = was && screen.getDisplayMatching(was).workArea;
+  const seen = wa && was.x < wa.x + wa.width && was.x + was.width > wa.x && was.y < wa.y + wa.height && was.y + was.height > wa.y;
+  const win = callWin = new BaseWindow({ ...(seen ? was : { width: 820, height: 560 }), show: false, title: t('call.window'), icon: APP_ICON });
   win.removeMenu();
   win.contentView.addChildView(view);
   const fit = () => { const [width, height] = win.getContentSize(); view.setBounds({ x: 0, y: 0, width, height }); };
   fit();
   win.on('resize', fit);
   const page = callPage = view.webContents;
+  // only the call: Teams' left rail and its title bar (search, the Office menu) stay in the chats window
+  void page.insertCSS('[data-tid="app-bar-wrapper"],[data-tid="title-bar"]{display:none!important}', { cssOrigin: 'user' });
   // leaving: Teams' own hang-up first, so the others see it at once, then the page goes and its memory with it
-  win.on('close', () => void page.executeJavaScript(`document.getElementById('hangup-button')?.click()`).catch(() => {}) // "Leave", seen in a live call
-    .finally(() => setTimeout(() => page.close(), 1000)));
+  win.on('close', () => {
+    state.callBounds = win.getNormalBounds(); saveState();
+    void page.executeJavaScript(`document.getElementById('hangup-button')?.click()`).catch(() => {}) // "Leave", seen in a live call
+      .finally(() => setTimeout(() => page.close(), 1000));
+  });
   win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } });
   win.show();
   newTeamsPage();
@@ -1344,8 +1355,9 @@ ipcMain.handle('open:jira', (_e, key: string) => { // where the links of Teams o
 // A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
 // its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
 const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
-ipcMain.handle('jira:issue', async (_e, key: string) => {
-  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) return null;
+ipcMain.handle('jira:issue', (_e, key: string) => jiraIssue(String(key)));
+async function jiraIssue(key: string) {
+  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return null;
   const hit = jiraSeen.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.issue;
   const r = await session.fromPartition('persist:teams').fetch(`${settings.jiraUrl.replace(/\/+$/, '')}/rest/api/2/issue/${key}?fields=summary,status`,
@@ -1356,6 +1368,12 @@ ipcMain.handle('jira:issue', async (_e, key: string) => {
   const issue = { summary: String(j?.fields?.summary ?? ''), status: String(j?.fields?.status?.name ?? '') };
   jiraSeen.set(key, { at: Date.now(), issue });
   return issue;
+}
+// The same after the Jira links in Teams' chats. Not signed in: a hint, asked again in a minute (a click on the link opens
+// Jira in a window of the app, where the user signs in). ponytail: re-asked on the page's next change, not on the sign-in itself
+const jiraLinks = () => teams.watchJira(settings.jiraUrl.replace(/\/+$/, ''), keys => {
+  for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000)
+    : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000)).catch(e => log('jira links:', errorText(e)));
 });
 ipcMain.handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
   if (settings.jiraUrl) webWindow(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again

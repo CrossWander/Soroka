@@ -25,8 +25,10 @@ export function attach(contents: WebContents) {
 export const emulateFocus = () => cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 
 // Runs fn inside the page. fn is serialized: it must not use anything from this module and must return plain data.
-const run = (fn: (arg: any) => unknown, arg: unknown = null): Promise<any> =>
-  wc.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
+// A page that never loaded anything waits for a load to run a script, for ever: the fresh page a call leaves behind (popOutCall)
+// loads in its turn in the app's queue, so a task already in it would wait for itself. There it fails at once.
+const run = (fn: (arg: any) => unknown, arg: unknown = null): Promise<any> => !wc.getURL() ? Promise.reject(fail(503, 'Teams page not loaded yet'))
+  : wc.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true);
 
 async function waitFor(fn: (arg: any) => unknown, arg: unknown = null, timeout = 15_000) {
   for (const end = Date.now() + timeout; ; await sleep(250)) {
@@ -226,8 +228,10 @@ export async function joinMeeting(text: string) {
 }
 // A call or meeting in progress: its hang-up button ("Leave" is #hangup-button in a live call; the compact view's one not seen yet)
 export const HANGUP = '[data-tid*="hangup" i], [id*="hangup" i]';
-export const inCall = (): Promise<boolean> => run(s => !!document.querySelector(s), HANGUP);
-// Told at once when a call starts or ends in the page (its hang-up button comes or goes), as the rings are.
+// ...or the screen before joining a meeting (camera and microphone choice, the lobby): its parts are "prejoin-…"
+export const CALL_UI = `${HANGUP}, [data-tid^="prejoin-"]`;
+export const inCall = (): Promise<boolean> => run(s => !!document.querySelector(s), CALL_UI);
+// Told at once when a call or a meeting's join screen comes or goes in the page, as the rings are.
 const CALL = 'tbCall';
 export async function watchCall(onChange: (on: boolean) => void) {
   await bind(CALL, payload => onChange(payload === '1'));
@@ -242,8 +246,57 @@ export async function watchCall(onChange: (on: boolean) => void) {
       timer = window.setTimeout(() => { timer = 0; const now = read(); if (now !== last) { last = now; w[name]?.(now); } }, 300);
     });
     w.__tbCall.observe(document.body, { subtree: true, childList: true });
-  }, [CALL, HANGUP]);
+  }, [CALL, CALL_UI]);
 }
+// ---------- Jira: a ticket's status and name after its link in the chat's messages ----------
+// The page marks each link to <base>/browse/KEY in a message's text (not in link previews, not in the compose box) with
+// data-tb-jira; the app's style draws that text after the link, so Teams' own elements stay as they are. Keys with no text
+// yet, or an expired one, go to onKeys; jiraText brings the answer. base '' takes the marks away.
+const JIRA = 'tbJira';
+export async function watchJira(base: string, onKeys: (keys: string[]) => void) {
+  await bind(JIRA, payload => onKeys(JSON.parse(payload)));
+  await run(([name, base]) => {
+    const w = window as any;
+    w.__tbJira?.disconnect();
+    w.__tbJiraInfo = {}; // key → { text, until }
+    w.__tbJiraAsked = new Set();
+    for (const a of document.querySelectorAll('a[data-tb-jira]')) a.removeAttribute('data-tb-jira');
+    if (!base) return;
+    if (!document.getElementById('tb-jira')) {
+      const s = document.createElement('style');
+      s.id = 'tb-jira'; // inline-block: the link's underline stays off the text
+      s.textContent = 'a[data-tb-jira]::after{content:"· " attr(data-tb-jira);display:inline-block;margin-left:5px;color:var(--colorNeutralForeground3,#888);text-decoration:none}';
+      document.head.append(s);
+    }
+    const prefix = `${base.toLowerCase()}/browse/`;
+    const scan = () => {
+      const want: string[] = [];
+      for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-tid="chat-pane-message"] [id^="content-"] a[href]')) {
+        const key = a.href.toLowerCase().startsWith(prefix) && !a.isContentEditable
+          ? a.href.slice(prefix.length).match(/^([a-z][a-z0-9]{1,9}-\d{1,6})(?:[/?#]|$)/i)?.[1].toUpperCase() : undefined;
+        if (!key) continue;
+        const info = w.__tbJiraInfo[key];
+        if (info?.text && a.getAttribute('data-tb-jira') !== info.text) a.setAttribute('data-tb-jira', info.text);
+        if (info && !info.text) a.removeAttribute('data-tb-jira');
+        if ((!info || Date.now() > info.until) && !w.__tbJiraAsked.has(key)) { w.__tbJiraAsked.add(key); want.push(key); }
+      }
+      if (want.length) w[name]?.(JSON.stringify(want));
+    };
+    w.__tbJiraScan = scan;
+    let timer = 0;
+    w.__tbJira = new MutationObserver(() => { if (!timer) timer = window.setTimeout(() => { timer = 0; scan(); }, 500); });
+    w.__tbJira.observe(document.body, { subtree: true, childList: true });
+    scan();
+  }, [JIRA, base]);
+}
+// The text after a ticket's links ('' for none), and for how long it holds before the page asks again.
+export const jiraText = (key: string, text: string, ttl: number) => run(([key, text, ttl]) => {
+  const w = window as any;
+  if (!w.__tbJiraInfo) return;
+  w.__tbJiraInfo[key] = { text, until: Date.now() + ttl };
+  w.__tbJiraAsked.delete(key);
+  w.__tbJiraScan?.();
+}, [key, text, ttl]);
 // Chromium's "memory is short" pass and a full garbage collection: the page drops what it can rebuild.
 export const trimMemory = () => cdp('Memory.simulatePressureNotification', { level: 'critical' }).then(() => cdp('HeapProfiler.collectGarbage'));
 
