@@ -3,6 +3,7 @@
 // computer), and sends only what the user approves.
 import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -997,6 +998,57 @@ setInterval(() => {
     if (++digestTries < 3) { state.digestDay = ''; digestRetry = Date.now() + 15 * 60_000; saveState(); } else digestTries = 0;
   });
 }, 30_000);
+
+// ---------- updates: a newer release on GitHub comes as a card; "Install" downloads its installer and runs it ----------
+// A minute after the start, then once a day; installed copies only. Nothing about the user goes along: a plain GET.
+// ponytail: tells and installs on a click; electron-updater (downloads in the background, installs on quit) when wanted
+const RELEASES = 'https://github.com/CrossWander/Soroka/releases';
+const newer = (a: string, b: string) => {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+};
+let updateShown = ''; // told once a run
+async function checkUpdate() {
+  if (!app.isPackaged) return; // a dev run is no installed version
+  try {
+    const r = await net.fetch('https://api.github.com/repos/CrossWander/Soroka/releases/latest',
+      { headers: { accept: 'application/vnd.github+json', 'user-agent': `Soroka/${app.getVersion()}` }, credentials: 'omit' });
+    if (!r.ok) return log(`update check: ${r.status}`);
+    const rel = await r.json() as { tag_name?: unknown; assets?: { name?: unknown; browser_download_url?: unknown }[] };
+    const version = /^v(\d+\.\d+\.\d+)$/.exec(String(rel.tag_name))?.[1];
+    if (!version || version === updateShown || !newer(version, app.getVersion())) return;
+    // the installer of that very release, from this repository only
+    const url = `${RELEASES}/download/v${version}/Soroka-Setup-${version}.exe`;
+    if (!rel.assets?.some(a => a.browser_download_url === url)) return log(`update: ${version} has no installer yet`);
+    updateShown = version;
+    log(`update: ${version} is out`);
+    toast({ title: t('update.title', { v: version }), message: t('update.text', { cur: app.getVersion() }), tone: 'accent', long: true,
+      click: () => void shell.openExternal(`${RELEASES}/tag/v${version}`), // missed, it is still in the tray's recent ones
+      actions: [{ label: t('act.install'), run: () => void installUpdate(url, version) },
+        { label: t('act.whatsNew'), run: () => void shell.openExternal(`${RELEASES}/tag/v${version}`) }] });
+  } catch (e) { log('update check:', errorText(e)); }
+}
+// The installer runs as on a first install, with its progress on screen; the app quits for it, and it starts the new one.
+async function installUpdate(url: string, version: string) {
+  toast({ title: t('update.loading', { v: version }), message: t('update.loadingText') });
+  try {
+    const r = await net.fetch(url, { credentials: 'omit' }); // GitHub sends it from its file storage
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const file = path.join(app.getPath('temp'), `Soroka-Setup-${version}.exe`);
+    fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+    log(`update: running the installer of ${version}`);
+    spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
+    quitting = true;
+    app.quit();
+  } catch (e) {
+    log('update:', errorText(e));
+    toast({ title: t('update.failed'), message: errorText(e), tone: 'error', long: true,
+      actions: [{ label: t('act.whatsNew'), run: () => void shell.openExternal(`${RELEASES}/tag/v${version}`) }] });
+  }
+}
+setTimeout(() => void checkUpdate(), 60_000);
+setInterval(() => void checkUpdate(), 86_400_000);
 
 // "Refresh" in the settings: each AI ready lists the models of its plan; for Claude Code, one tiny call per family says
 // which model it stands for now and whether the plan includes it ("ok", or why not, e.g. "requires usage credits").

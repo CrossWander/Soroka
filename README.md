@@ -52,6 +52,7 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 - Interface in Ukrainian, English and Russian. When you pick Soroka's language or theme, Teams switches to it too, once; a later change in Teams itself stays.
 - Hotkeys in the Teams window: Ctrl+Shift+R suggest a reply, Ctrl+Shift+S summary, Ctrl+Shift+I improve my text, F5 reload Teams.
 - When hidden, Soroka gives its memory back to Windows (about 250 MB instead of 1.5 GB).
+- A new version comes as a card: «Install» downloads it from the Releases page and Soroka restarts as the new one.
 
 ## AI: your own plan, no API keys
 
@@ -81,7 +82,7 @@ Without any AI, Soroka still notifies, lets you reply by hand and makes the extr
 - **Where your chats go.** The text of a chat goes only to the AI whose model you chose, under your plan's terms. Ollama keeps it on your computer. Free plans may train on what they get, so use a work plan for work chats.
 - **«Not to AI».** Chats and people on this list never reach the AI. Their messages are also cut out of other chats' transcripts.
 - **No tools for background AI.** What Soroka asks the AI on its own (reply variants made ahead for new messages, AI sorting, the daily digest) goes only to an AI without tools: Claude, Codex with its tools switched off, or Ollama. A message in a chat cannot make the AI run commands, read files or open sites.
-- **Your data stays local.** Your Teams session, settings and the local API token live in `%APPDATA%\Soroka`. Soroka has no server of its own and sends no telemetry.
+- **Your data stays local.** Your Teams session, settings and the local API token live in `%APPDATA%\Soroka`. Soroka has no server of its own and sends no telemetry. Once a day it asks GitHub whether a newer version is out; that request carries nothing about you.
 - **The local API is local only.** It listens on `127.0.0.1` and needs the token. It turns away requests from browser pages.
 
 ## Requirements
