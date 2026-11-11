@@ -827,7 +827,11 @@ const variantsRequest = (d: Draft, hint = ''): Request => { notToAi(d.title); re
 // opens (the one in the settings, else the model's); they paste it.
 async function handoff(req: Request, key: 'draftModel' | 'summaryModel') {
   if (settings.aiOff) throw new Error(t('toast.aiOff'));
-  clipboard.writeText(`${req.system}\n\n${req.prompt}`);
+  const text = `${req.system}\n\n${req.prompt}`;
+  await clipboard.writeText(text);
+  // the chat does not stay on the clipboard, where any program and any page allowed to read it find it.
+  // ponytail: Windows' clipboard history (Win+V) keeps its copy; excluding it takes a clipboard format Electron cannot add to the text
+  setTimeout(() => void clipboard.readText().then(now => { if (now === text) clipboard.clear(); }), 5 * 60_000);
   await shell.openExternal(ai.WEB[settings.webChat] ?? ai.webOf(modelFor(key) || settings[key]) ?? ai.WEB.claude);
 }
 
