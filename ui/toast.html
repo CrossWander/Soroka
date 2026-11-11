@@ -117,6 +117,7 @@
     $('close').title = t.closeLabel;
     n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false;
     $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
+    for (const b of document.querySelectorAll('[data-react]')) b.hidden = false;
     $('ai').hidden = !t.reply?.ai;
     $('quick').replaceChildren(...(t.reply?.quick ?? []).map(q => {
       const b = document.createElement('button');
@@ -142,15 +143,17 @@
   });
 
   // ---- a message card ----
-  $('open').onclick = async e => { // the field opens in the card: the card stays and takes the keyboard
-    e.stopPropagation();
-    replying = true; clearTimeout(timer);
+  $('open').onclick = e => { e.stopPropagation(); openField(true); };
+  async function openField(stay) { // the field opens in the card and takes the keyboard; stay: the card waits, however long the user types
+    replying = stay; clearTimeout(timer);
     $('open').hidden = true; $('reply').hidden = false; $('quick').hidden = !$('quick').children.length;
     if (variants.length && !$('field').value) $('field').value = variants[next++ % variants.length]; // already made: drafts mode
     await bridge.invoke('toast:focus');
     await fit();
     $('field').focus();
-  };
+    arm();
+  }
+  $('field').oninput = () => { replying = true; clearTimeout(timer); }; // typing: the card stays
   $('ai').onclick = async e => { // the AI's variant into the field, to edit before sending; again: the next one
     e.stopPropagation();
     if (!variants.length) {
@@ -183,11 +186,19 @@
     img.onload = () => img.style.setProperty('--frames', img.naturalHeight / img.naturalWidth); // square frames, one under another
     img.src = `https://teams.public.onecdn.static.microsoft/evergreen-assets/personal-expressions/v2/assets/emoticons/${img.closest('[data-react]').dataset.react}/default/30_anim_f.png`;
   }
-  for (const b of document.querySelectorAll('[data-react]')) b.onclick = async e => { // Teams' quick reactions, on the other side's latest message
+  // Teams' quick reactions, on the other side's latest message. The card stays with the reply field open, in case there
+  // is something to say too; it goes on its own if the user does not start typing.
+  for (const b of document.querySelectorAll('[data-react]')) b.onclick = async e => {
     e.stopPropagation();
     busy(true);
-    try { await bridge.invoke('react:pick', n, b.dataset.react, 1); leave(); }
-    catch (err) { busy(false); say(failed(err), true); }
+    try {
+      await bridge.invoke('react:pick', n, b.dataset.react, 1, true); // true: no second card saying it
+      busy(false);
+      for (const x of document.querySelectorAll('[data-react]')) x.hidden = true; // a second click would take it off in Teams
+      life = Math.max(life, 10_000);
+      say(t('card.reacted', { emoji: b.querySelector('img')?.alt || b.textContent })); // offline the picture is the glyph itself
+      openField(false);
+    } catch (err) { busy(false); say(failed(err), true); }
   };
   $('more').onclick = e => { e.stopPropagation(); $('menu').hidden = !$('menu').hidden; clearTimeout(timer); fit(); };
   $('m-react').onclick = e => { e.stopPropagation(); bridge.invoke('react:open', n); leave(); };

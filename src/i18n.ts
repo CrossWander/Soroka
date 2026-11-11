@@ -98,6 +98,7 @@ const S: Record<string, [string, string, string]> = {
   'card.thinking': ['ШІ пише варіант…', 'AI is writing a reply…', 'ИИ пишет вариант…'],
   'card.sending': ['Надсилаю…', 'Sending…', 'Отправляю…'],
   'card.more': ['Ще', 'More', 'Ещё'],
+  'card.reacted': ['{emoji} поставлено — можна ще й відповісти', '{emoji} added — you can reply too', '{emoji} поставлено — можно ещё и ответить'],
   'card.reactions': ['😊 Інші реакції', '😊 Other reactions', '😊 Другие реакции'],
   'card.later': ['⏰ Нагадати за годину', '⏰ Remind me in an hour', '⏰ Напомнить через час'],
   'act.openTeams': ['Відкрити в Teams', 'Open in Teams', 'Открыть в Teams'],

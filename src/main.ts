@@ -1120,7 +1120,7 @@ function showReactions(n: string) {
 }
 let reactWin: BrowserWindow | null = null;
 // The reaction goes on the other side's latest message; it counts as an acknowledgement: no "still waiting" reminder after it.
-async function react(n: string, emoticon: string, tab: number) {
+async function react(n: string, emoticon: string, tab: number, quiet = false) { // quiet: the card it came from says so itself
   const d = state.drafts[n];
   if (!d) throw new Error(t('err.handled'));
   await serial(async () => {
@@ -1132,7 +1132,7 @@ async function react(n: string, emoticon: string, tab: number) {
   state.reactions = [emoticon, ...state.reactions.filter(x => x !== emoticon)].slice(0, 12);
   saveState();
   reactWin?.close();
-  toast({ title: t('toast.reacted', { title: d.title }), message: d.last });
+  if (!quiet) toast({ title: t('toast.reacted', { title: d.title }), message: d.last });
 }
 // "Remind me later": the card leaves the answers window and comes back as a toast at that time. -1 = tomorrow at 9:00.
 function snooze(n: string, minutes: number) {
@@ -1345,9 +1345,9 @@ ipcMain.handle('react:open', (_e, n: string) => showReactions(String(n)));
 ipcMain.handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
 ipcMain.handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
 ipcMain.handle('react:get', (_e, n: string) => ({ title: state.drafts[String(n)]?.title ?? '', recent: state.reactions }));
-ipcMain.handle('react:pick', logged('react', (_e, n: string, id: string, tab: number) => {
+ipcMain.handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, quiet: unknown) => {
   if (!/^[\w-]{1,80}$/.test(String(id)) || !Number.isInteger(tab) || tab < 1 || tab > 9) throw new Error('bad reaction');
-  return react(String(n), String(id), tab);
+  return react(String(n), String(id), tab, quiet === true);
 }));
 // the variants come back to the caller: a card asks for a snoozed draft too, which the answers list leaves out
 ipcMain.handle('draft:suggest', async (_e, n: string) => { await suggest(n); const d = state.drafts[n]; return { variants: d?.variants ?? [], error: d?.error }; });
