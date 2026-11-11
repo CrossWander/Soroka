@@ -127,9 +127,11 @@ if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify';
 // improve: "Improve my text" — `last` is the user's own unsent text from the compose box, and sending replaces it
 // nudge: a reminder about the user's own question nobody answered (`last`); it closes when an answer comes
 // urgent: an @mention or a keyword hit, never held back; held: "AI sorts" found it waits for nothing from the user
+// hushed: came in quiet hours, announced when they end; preview: the chat's last message when a card made by request was
+// first seen in the list (a new one of the user's own closes the card)
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
   context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean;
-  nudge?: boolean; urgent?: boolean; held?: boolean };
+  nudge?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string };
 // seen: per chat, the last message announced ("time|preview"); models: last result of "Check models"; digestDay: date of the last daily digest
 const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string, Draft>, seen: {} as Record<string, string>,
   models: {} as Record<string, string>, digestDay: '', summaries: {} as Record<string, Summary & { at: number }>, // summaries: the last one per chat
@@ -526,7 +528,7 @@ async function suggestHere() {
   if (!n) {
     const msgs = forAi(c.more);
     const last = [...msgs].reverse().find(m => !m.mine);
-    n = addDraft({ chatId: c.id, title: c.title, note: c.title, last: last ? `${last.author}: ${last.text}` : '', text: '', context: msgs.map(line) });
+    n = addDraft({ chatId: c.id, title: c.title, note: c.title, last: last ? `${last.author}: ${last.text}` : '', text: '', context: msgs.map(line), preview: 'preview' in c ? c.preview : undefined });
   }
   await suggestThenShow(n);
 }
@@ -543,8 +545,7 @@ async function improveHere() {
   const text = c?.more.text;
   if (!c || !text) return toast({ title: t('toast.writeFirst'), message: t('toast.improveHere') });
   for (const d of pending()) if (d.chatId === c.id && d.improve) state.drafts[d.n].status = 'rejected'; // one card per chat: the newest text
-  const msgs = await serial(() => teams.lastMessages(10));
-  await suggestThenShow(addDraft({ chatId: c.id, title: c.title, note: t('drafts.improveNote', { title: c.title }), last: text, text: '', context: msgs.map(line), improve: true }));
+  await suggestThenShow(addDraft({ chatId: c.id, title: c.title, note: t('drafts.improveNote', { title: c.title }), last: text, text: '', context: forAi(c.more.msgs).map(line), improve: true, preview: 'preview' in c ? c.preview : undefined }));
 }
 async function summaryHere() {
   const c = await currentChat();
@@ -940,14 +941,21 @@ const askFrom = (a: unknown): Ask => {
   return { chats: Array.isArray(chats) ? chats.slice(0, 10).map(c => ({ id: String(c?.id), title: String(c?.title) })) : [],
     question: typeof question === 'string' && question.trim() ? question.trim().slice(0, 500) : undefined, plain: plain === true || !aiReady() };
 };
-// The daily digest once a day, at the time set in the settings or soon after: it opens chats, so not under the user's hands.
+// The daily digest once a day, at the time set in the settings or soon after: it opens chats, so not under the user's hands,
+// and not in the quiet hours (it comes when they end). A failed one is tried again in 15 minutes, 3 times at most.
+let digestRetry = 0, digestTries = 0;
 setInterval(() => {
   const day = new Date().toDateString();
-  if (!settings.digestAt || hhmm() < settings.digestAt || state.digestDay === day || status !== 'ready' || teamsWin.isFocused()) return;
-  state.digestDay = day;
+  if (!settings.digestAt || hhmm() < settings.digestAt || state.digestDay === day || status !== 'ready' || teamsWin.isFocused() || quiet() || Date.now() < digestRetry) return;
+  state.digestDay = day; // marked before the run: the timer comes round again while it reads
   saveState();
-  windowAnswer('*', t('summary.digest'), '', { plain: !aiReady() }).then(r => { remember('*', r); if (r.count) toast({ title: t('toast.digestReady'), message: t('toast.digestReadyText', { n: r.count }), tone: 'accent', long: true,
-    click: () => showSummary('*', r) }); }).catch(e => log('digest:', errorText(e)));
+  windowAnswer('*', t('summary.digest'), '', { plain: !aiReady(), auto: true }).then(r => {
+    digestTries = 0; remember('*', r);
+    if (r.count) toast({ title: t('toast.digestReady'), message: t('toast.digestReadyText', { n: r.count }), tone: 'accent', long: true, click: () => showSummary('*', r) });
+  }).catch(e => {
+    log('digest:', errorText(e));
+    if (++digestTries < 3) { state.digestDay = ''; digestRetry = Date.now() + 15 * 60_000; saveState(); } else digestTries = 0;
+  });
 }, 30_000);
 
 // "Refresh" in the settings: each AI ready lists the models of its plan; for Claude Code, one tiny call per family says
@@ -1196,17 +1204,26 @@ async function react(n: string, emoticon: string, tab: number, quiet = false) { 
   reactWin?.close();
   if (!quiet) toast({ title: t('toast.reacted', { title: d.title }), message: d.last });
 }
-// "Remind me later": the card leaves the answers window and comes back as a toast at that time. -1 = tomorrow at 9:00.
+// "Remind me later": the card leaves the answers window and comes back as a toast at that time. -1 = tomorrow at 9:00;
+// in the small hours (before 5:00) "tomorrow" is the coming morning, as the user means it.
 function snooze(n: string, minutes: number) {
   const d = state.drafts[n];
   if (d?.status !== 'pending') return;
-  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0);
-  d.remindAt = minutes < 0 ? tomorrow.getTime() : Date.now() + minutes * 60_000;
+  const morning = new Date();
+  if (morning.getHours() >= 5) morning.setDate(morning.getDate() + 1);
+  morning.setHours(9, 0, 0, 0);
+  d.remindAt = minutes < 0 ? morning.getTime() : Date.now() + minutes * 60_000;
   draftsChanged();
 }
 // Snoozed cards whose time came, and messages still without an answer after the time set in the settings.
 function remind() {
   if (quiet()) return; // they wait for the quiet hours to end
+  // what came in the quiet hours, now they are over: one card, or one for all of them
+  const hushed = waiting().filter(([, d]) => d.hushed);
+  for (const [, d] of hushed) delete d.hushed;
+  if (hushed.length === 1) announce(hushed[0][0]);
+  else if (hushed.length) toast({ title: t('toast.hushed', { n: hushed.length }), message: [...new Set(hushed.map(([, d]) => d.title))].join(', '), tone: 'accent', long: true, click: () => showDrafts(true) });
+  if (hushed.length) saveState();
   for (const [n, d] of waiting()) {
     if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; draftsChanged(); announce(n, t('toast.snoozed')); continue; }
     if (d.incoming && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
@@ -1254,19 +1271,32 @@ function trackQuestions(chats: teams.Chat[]) {
 // A message's card is done when the user answered in Teams itself (their message is now the chat's last one), or read
 // the chat without asking the app for anything on it: no reply variants asked for or failing, not snoozed.
 // In drafts mode the app reads the chat itself, but its card has the variants (or their error) by then.
+// A card made on request (suggest, improve, a Claude session's draft) is done when the user wrote in that chat since it was
+// made, or after a day untouched. In drafts mode the app opens the chats itself: there a card is never taken as read.
 function closeAnswered(chats: teams.Chat[]) {
   let changed = false;
   for (const [, d] of waiting()) {
-    const c = (d.incoming || d.nudge) && chats.find(x => x.id === d.chatId); // "Suggest reply" may be asked on a chat the user wrote last
-    if (!c) continue;
-    if (d.nudge) { if (MINE.test(c.preview)) continue; d.status = 'answered'; } // the other side answered the question
+    const c = chats.find(x => x.id === d.chatId);
+    if (!c || d.busy) continue;
+    if (!d.incoming && !d.nudge) {
+      if (d.preview === undefined) { d.preview = c.preview; changed = true; continue; } // a card from before 0.29
+      if (c.preview !== d.preview && MINE.test(c.preview)) d.status = 'answered';
+      else if (Date.now() - d.at > 86_400_000 && !d.remindAt) d.status = 'rejected';
+      else continue;
+    }
+    else if (d.nudge) { if (MINE.test(c.preview)) continue; d.status = 'answered'; } // the other side answered the question
     else if (MINE.test(c.preview)) d.status = 'answered';
-    else if (!c.unread && !d.variants?.length && !d.busy && !d.error && !d.remindAt) d.status = 'read';
+    else if (mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt) d.status = 'read';
     else continue;
     delete d.context; changed = true;
   }
   if (changed) draftsChanged();
 }
+// The last message announced per chat is "time|preview". Past midnight Teams shows a message's day instead of its time:
+// the same preview with a date is the same message, not a new one.
+const sameMessage = (seen: string | undefined, c: teams.Chat) =>
+  seen === `${c.time}|${c.preview}` || (!!seen && seen.slice(seen.indexOf('|') + 1) === c.preview && !/^\d{1,2}:\d{2}$/.test(c.time));
+let chatTitles = new Set<string>(); // the chats in the list at the last look: Activity's mentions in them came as their own cards
 
 // New personal messages, @mentions and keyword hits, read from the chat list: notify and monitor modes leave the chat
 // unread in Teams; drafts mode opens it for the transcript Claude needs (Teams then marks it read). One card per chat.
@@ -1275,21 +1305,21 @@ async function scan() {
   const chats = await teams.chatList();
   closeAnswered(chats);
   trackQuestions(chats);
-  for (const c of chats.filter(wanted).slice(0, 5)) {
-    const key = `${c.time}|${c.preview}`;
-    if (state.seen[c.id] === key) continue;
-    state.seen[c.id] = key;
-    saveState();
-    if (!listed(c)) continue;
+  chatTitles = new Set(chats.map(c => c.title));
+  // 5 new ones a look at most; the rest come at the next one. Marked seen once handled: one that failed comes back.
+  for (const c of chats.filter(c => wanted(c) && !sameMessage(state.seen[c.id], c)).slice(0, 5)) {
+    const seen = () => { delete state.seen[c.id]; state.seen[c.id] = `${c.time}|${c.preview}`; saveState(); }; // the newest last: the state keeps the latest
+    if (!listed(c)) { seen(); continue; }
     let context: string[] | undefined, last = c.preview; // the preview is cut by Teams; the opened chat gives the whole message
     if (mode() === 'drafts' && !aiSkipped(c.title)) {
       await teams.openChat(c);
       const msgs = await teams.lastMessages(15);
       const m = msgs.at(-1);
-      if (!m || m.mine) continue;
-      context = msgs.map(line);
+      if (!m || m.mine) { seen(); continue; }
+      context = forAi(msgs).map(line);
       last = c.type === 'direct' ? m.text : `${m.author}: ${m.text}`;
     }
+    seen();
     if (mode() === 'monitor' && !aiSkipped(c.title))
       fs.appendFileSync(file('events.log'), JSON.stringify({ at: new Date().toISOString(), chat: c.title, type: c.type, last }) + '\n');
     const note = c.type === 'direct' ? c.title : t(c.mention ? 'toast.mention' : 'toast.keyword', { title: c.title });
@@ -1325,11 +1355,17 @@ async function tick() {
         return await scan();
       } finally { await restoreChat(before); }
     });
-    for (const n of found) {
-      if (await held(n)) continue; // waits for nothing from the user: in the hourly round-up
-      if (mode() === 'drafts' && !aiSkipped(state.drafts[n].title)) await suggest(n);
-      if (!quiet()) announce(n); // in quiet hours the card waits in the tray
-    }
+    // each message on its own: one waiting for the AI does not hold back another's card. Drafts mode shows the card at once and
+    // its variants follow; in quiet hours it waits for them to end (remind).
+    await Promise.all(found.map(async n => {
+      if (await held(n)) return; // waits for nothing from the user: in the hourly round-up
+      const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d);
+      if (quiet()) { d.hushed = true; saveState(); }
+      else announce(n, auto ? t('toast.replyBusy') : undefined);
+      if (!auto) return;
+      await suggest(n, { auto: true });
+      toastWin?.webContents.send('toast:variants', { n, variants: d.variants ?? [], error: d.error }); // the card on screen gets them
+    }));
     await checkActivity();
     if (!windowInUse() && Date.now() - trimmedAt > 10 * 60_000) trimRam(); // what the work since brought back
   } catch (e) { log('tick:', errorText(e)); }
@@ -1348,8 +1384,10 @@ async function checkActivity() {
   for (const a of items.reverse()) { // oldest first
     if (state.activitySeen.includes(a.id)) continue;
     state.activitySeen.unshift(a.id);
-    const like = { title: a.where, preview: `${a.title} ${a.text}` } as teams.Chat; // the chat filters of the settings apply
+    // the chat filters of the settings apply; who did it ("Ім'я згадав вас") counts as the author
+    const like = { title: a.where, preview: `${a.title}: ${a.text}`, type: 'group' } as teams.Chat;
     if (first || !listed(like) || !(ANNOUNCED.includes(a.kind) || keywordHit(like))) continue;
+    if (chatTitles.has(a.where)) continue; // a mention in a chat: its own card came from the chat list already
     log(`activity: ${a.kind} in ${a.where}`);
     toast({ title: a.where, message: a.text, hint: a.title, tone: 'accent', long: true, click: () => openActivity(a.id),
       actions: [{ label: t('act.openTeams'), run: () => openActivity(a.id) }] });
@@ -1584,7 +1622,7 @@ function startApi() {
         const { chat, text, note } = await body(req);
         need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
         const c = await serial(() => teams.findChat(chat));
-        const n = addDraft({ chatId: c.id, title: c.title, note: note ?? c.title, last: '', text });
+        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, preview: c.preview });
         toast({ title: t('toast.claudeSuggests'), message: `${c.title}: ${text}`, tone: 'accent', long: true, click: () => showDrafts(true) });
         return json(res, 200, { draft: n });
       }

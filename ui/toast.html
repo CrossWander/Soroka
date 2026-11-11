@@ -171,6 +171,13 @@
     if (variants.length) $('field').value = variants[next++ % variants.length];
     $('field').focus();
   };
+  // drafts mode: the variants the app was still making when the card came
+  bridge.on('toast:variants', v => {
+    if (v.n !== n) return;
+    variants = v.variants; next = 0;
+    say(v.error || t('toast.replyReady'), !!v.error);
+    if (!$('reply').hidden && !$('field').value && variants.length) $('field').value = variants[next++];
+  });
   async function send() {
     const text = $('field').value.trim();
     if (!text) return $('field').focus();
