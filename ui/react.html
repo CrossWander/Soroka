@@ -30,7 +30,7 @@
 </style>
 </head>
 <body>
-  <div class="bar"><span id="head"></span><button class="close" data-i18n-title="drafts.hide">×</button></div>
+  <div class="bar"><span id="head"></span><button class="close" data-i18n-title="toast.close">✕</button></div>
   <div id="quick"></div>
   <input id="search" data-i18n-placeholder="react.search">
   <div id="tabs"></div>
@@ -46,8 +46,9 @@
   const { title, recent } = await bridge.invoke('react:get', n);
   $('head').textContent = t('react.title', { title });
   document.querySelector('.close').onclick = () => window.close();
+  addEventListener('keydown', e => { if (e.key === 'Escape') window.close(); }); // like a menu
   const byId = new Map();
-  for (const [, tab, items] of REACTIONS) for (const [id, glyph, label] of items) if (!byId.has(id)) byId.set(id, { id, glyph, label, tab });
+  for (const [, tab, items] of REACTIONS) for (const [id, glyph, label] of items) if (!byId.has(id)) byId.set(id, { id, glyph, label: document.documentElement.lang === 'ru' ? label : id.replace(/^[0-9a-f]+(_[0-9a-f]+)*_/, '').replace(/[-_]+/g, ' '), ru: label, tab }); // Teams' labels are Russian: in another language its id says it
   // Teams' quick reactions; its quick 👍 is the emoticon "yes" (the picker's "like" is another thumb)
   const QUICK = ['yes', 'heart', 'laugh', 'surprised', 'sad', 'angry'];
   // Teams' own picture of a reaction, by its id, so it looks as in Teams; offline, the font's glyph
@@ -85,7 +86,7 @@
     const q = $('search').value.trim().toLowerCase();
     if (!q) return show(0);
     [...$('tabs').children].forEach(b => b.classList.remove('on'));
-    $('grid').replaceChildren(...[...byId.values()].filter(r => (r.label.toLowerCase().includes(q) || r.id.includes(q))).slice(0, 300).map(button));
+    $('grid').replaceChildren(...[...byId.values()].filter(r => r.ru.toLowerCase().includes(q) || r.id.includes(q)).slice(0, 300).map(button));
   };
   show(0);
   $('search').focus();

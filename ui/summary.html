@@ -5,8 +5,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title data-i18n="summary.title">Soroka</title>
 <style>
-  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; } }
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --on-accent: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; --on-accent: #16171d; } }
   /* the panel's "Summary" tab, on the right of the Teams page: its line on the left, its head (ui/panel.js) on top */
   body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; border-left: 1px solid var(--line); box-sizing: border-box; }
   main { flex: 1; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
@@ -16,7 +16,7 @@
   #pick { margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); max-height: 168px; overflow-y: auto; }
   #pick label { display: flex; gap: 8px; align-items: center; padding: 1px 0; }
   #pick p { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
-  button.go { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
+  button.go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); cursor: pointer; }
   /* both labels take the same cell: the button keeps its width when "Summarize" turns into "Stop" */
   :is(#go, #plain) { display: inline-grid; } :is(#go, #plain) > span { grid-area: 1 / 1; }
   :is(#go, #plain) > span + span, :is(#go, #plain).running > span:first-child { visibility: hidden; } :is(#go, #plain).running > span + span { visibility: visible; }
@@ -27,7 +27,7 @@
   .spin { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
-  #out { flex: 1; overflow-y: auto; white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  #out { flex: 1; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
   #out:empty { display: none; }
   .chip { font-size: 12px; padding: 2px 8px; cursor: pointer; }
   #jira:empty { display: none; }
@@ -36,7 +36,7 @@
 <body data-tab="summary">
 <main>
   <div class="row">
-    <select id="chat"><option data-i18n="summary.loading"></option></select>
+    <select id="chat" data-i18n-aria="summary.chat"><option data-i18n="summary.loading"></option></select>
     <select id="period" data-i18n-title="summary.period">
       <option value="d0" data-i18n="summary.d0"></option><option value="d1" data-i18n="summary.d1"></option><option value="d7" data-i18n="summary.d7" selected></option>
       <option value="d30" data-i18n="summary.d30"></option><option value="n100" data-i18n="summary.n100"></option><option value="me" data-i18n="summary.me"></option>
@@ -122,7 +122,7 @@
     $('status').textContent = question ? t('summary.answer', { title: c.title })
       : c.id === '*' ? t('summary.digestDone', { n: r.count || '' }).replace(/:\s*$/, '')
       : c.id.length === 1 ? (r.count ? t('summary.chatsDone', { title: c.title.replace(/^★\s*|…$/g, ''), n: r.count }) : '')
-      : r.count ? t('summary.done', { title: c.title, count: plural(r.count), from: r.from }) : `«${c.title}»`;
+      : r.count ? t('summary.done', { title: c.title, count: plural(r.count), from: r.from }) : t('summary.quoted', { title: c.title });
     $('copy').hidden = !r.text;
   }
   // The picked chat, or the ticked ones under "Several chats" (their names make the title of the toast and the status line)

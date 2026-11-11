@@ -5,17 +5,18 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title data-i18n="drafts.title">Soroka</title>
 <style>
-  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --chip: #ececf8; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; --chip: #34344a; } }
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #deded8; --accent: #5b5fc7; --error: #c4314b; --chip: #ececf8; --on-accent: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3d3d3b; --accent: #8f95ff; --error: #ff8a9e; --chip: #34344a; --on-accent: #16171d; } }
   html, body { height: 100%; }
   /* the panel's "Replies" tab, on the right of the Teams page: its line on the left, its head (ui/panel.js) on top */
   body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; border-left: 1px solid var(--line); box-sizing: border-box; }
   .hint { color: var(--muted); font-size: 12px; margin: 8px 14px; }
   .empty { color: var(--muted); text-align: center; margin: 40px 20px; }
   #list { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
-  article { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  article { overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
   .note { font-weight: 600; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
-  .note a { font-weight: 400; font-size: 12px; color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .note .link { font: 400 12px "Segoe UI", system-ui, sans-serif; color: var(--accent); cursor: pointer; white-space: nowrap; border: 0; padding: 0; background: none; }
+  .note .link:hover { text-decoration: underline; }
   .links { display: flex; gap: 10px; align-items: baseline; }
   select.later { font: 12px "Segoe UI", system-ui, sans-serif; color: var(--accent); background: transparent; border: 0; padding: 0; cursor: pointer; }
   select.later option { color: var(--fg); background: var(--card); }
@@ -38,12 +39,13 @@
   textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .err { color: var(--error); font-size: 12px; }
   .err:not(:empty) { margin-top: 4px; }
+  .err.ok { color: var(--muted); } /* a result, not an error */
   footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   footer .react { padding: 5px 8px; }
   footer .decide { display: flex; gap: 8px; margin-left: auto; } /* "Dismiss" and "Send" wrap together in the narrow panel */
   .quote { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 4px; }
   button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
-  button.send { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.send { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   button:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
@@ -63,15 +65,16 @@
 
   function card(d) {
     const box = el('article');
-    const open = el('a', '', t('act.openChat'));
+    const open = el('button', 'link', t('act.openChat'));
     open.onclick = () => bridge.invoke('draft:open', d.n);
     // without an AI program: the request with the transcript goes to the clipboard and the AI chat site opens
-    const handoff = el('a', '', t('summary.handoff')); handoff.title = t('summary.handoffTip');
-    handoff.onclick = () => bridge.invoke('draft:handoff', d.n).then(() => (err.textContent = t('summary.handoffDone')), e => (err.textContent = errorText(e)));
+    const handoff = el('button', 'link', t('summary.handoff')); handoff.title = t('summary.handoffTip');
+    handoff.onclick = () => bridge.invoke('draft:handoff', d.n).then(() => { err.textContent = t('summary.handoffDone'); err.classList.add('ok'); }, e => { err.textContent = errorText(e); err.classList.remove('ok'); });
     // "Remind me later": the card leaves the window and comes back as a notification at that time
     const later = el('select', 'later');
     later.append(...[['', t('drafts.later')], ['30', t('drafts.later30')], ['60', t('drafts.later60')], ['180', t('drafts.later180')], ['-1', t('drafts.laterTomorrow')]]
       .map(([v, label]) => Object.assign(el('option', '', label), { value: v })));
+    later.setAttribute('aria-label', t('drafts.later'));
     later.onchange = () => later.value && bridge.invoke('draft:snooze', d.n, Number(later.value));
     later.hidden = !!d.improve; // "Improve my text" answers no one: nothing to be reminded of
     const links = el('span', 'links'); links.append(later, handoff, open);
@@ -105,7 +108,7 @@
     };
     send.onclick = () => act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked));
     reject.onclick = () => act(() => bridge.invoke('draft:reject', d.n));
-    area.onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) send.click(); };
+    area.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.click(); } }; // as in Teams: Shift+Enter is a new line
     const decide = el('span', 'decide'); decide.append(reject, send);
     const foot = el('footer'); foot.append(suggest, react, decide);
     box.append(said, jira, variants, quick, busy, area, quoteRow, err, foot);
@@ -124,8 +127,8 @@
         jira.replaceChildren(...keys.map(k => {
           const b = el('button', '', `${k} ↗`); b.onclick = () => bridge.invoke('open:jira', k);
           bridge.invoke('jira:issue', k).then(i => { // its name and status, from Jira as the user
-            if (i?.summary) { b.textContent = `↗ ${k} · ${i.status} · ${i.summary}`; b.title = `${k} · ${i.status}\n${i.summary}`; }
-            else if (i?.login) { b.textContent = `${k} · ${t('jira.login')}`; b.onclick = () => bridge.invoke('jira:login'); jira.dataset.keys = ''; } // asked again after the sign-in
+            if (i?.summary) { b.textContent = `${k} · ${i.status} · ${i.summary} ↗`; b.title = `${k} · ${i.status}\n${i.summary}`; }
+            else if (i?.login) { b.textContent = `${k} · ${t('jira.login')} ↗`; b.onclick = () => bridge.invoke('jira:login'); jira.dataset.keys = ''; } // asked again after the sign-in
           }, () => {});
           return b;
         }));

@@ -9,7 +9,7 @@
      video (an icon), accept (green) and decline (red), each pressing Teams' own button. Slides down in the top right
      corner and stays while Teams rings. */
   :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1);
-    --yes: #13a10e; --no: #d13438; }
+    --yes: #0e7a0b; --no: #c4314b; } /* white text on them at 4.5:1 or more */
   @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); } }
   html, body { margin: 0; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); user-select: none; }
   [hidden] { display: none !important; }
@@ -25,6 +25,7 @@
   @keyframes halo { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
   @media (prefers-reduced-motion: reduce) { .live .avatar { animation: none; } }
   .kind { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind.error { color: var(--no); }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .buttons { display: flex; gap: 8px; }
   .buttons button { font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; color: #fff;
@@ -75,6 +76,7 @@
     if (!r) return;
     const call = r.kind === 'call';
     $('card').classList.toggle('live', r.live);
+    $('kind').classList.remove('error');
     $('avatar').textContent = call ? initials(r.title) : '📅';
     const kind = t(call ? 'call.incoming' : r.live ? 'call.meeting' : 'call.meetingGone');
     $('kind').textContent = $('kind').title = r.message ? `${kind} · ${r.message}` : kind;
@@ -92,7 +94,16 @@
       else if (video.includes(b)) { e.className = 'video'; e.setAttribute('aria-label', b.label); e.append(...icon('i-video')); }
       else if (b === rest[0]) { e.className = 'yes'; e.append(...icon('i-call', t(call ? 'call.accept' : 'call.join'))); }
       else { e.className = 'other'; e.textContent = b.label; }
-      e.onclick = () => { [...$('buttons').children].forEach(x => (x.disabled = true)); bridge.invoke('ring:click', b.i).catch(() => bridge.invoke('ring:dismiss')); };
+      // a click that did not reach Teams leaves the card up, saying so: Teams' window comes up with its own buttons
+      e.onclick = () => {
+        const all = [...$('buttons').children];
+        all.forEach(x => (x.disabled = true));
+        bridge.invoke('ring:click', b.i).catch(err => {
+          all.forEach(x => (x.disabled = false));
+          $('kind').textContent = $('kind').title = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+          $('kind').classList.add('error');
+        });
+      };
       return e;
     }));
     await bridge.invoke('ring:size', $('card').offsetHeight + 32); // + margins left for the shadow

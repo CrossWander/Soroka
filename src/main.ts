@@ -326,16 +326,20 @@ handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPa
 
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
-type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; click?: () => void;
+// stay: no timeout, the card waits for the user's answer; gone: it closed without one of its actions
+type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; click?: () => void; gone?: () => void;
   actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[] } };
 let toastWin: BrowserWindow | null = null;
-let toastHandlers: ((() => void) | undefined)[] = [];
-// One card at a time: a newer one waits its turn instead of wiping out the one on screen.
+let toastHandlers: ((() => void) | undefined)[] = [], toastGone: (() => void) | undefined;
+// One card at a time: a newer one waits its turn instead of wiping out the one on screen. A burst past 5 waiting comes as
+// one card counting the rest: they are in the tray's recent ones, and the messages in "Replies".
 const toastQueue: Toast[] = [];
-let toastOn = false, toastGuard: NodeJS.Timeout | undefined;
+let toastOn = false, toastGuard: NodeJS.Timeout | undefined, toastMissed = 0;
 function nextToast() {
   toastOn = false; clearTimeout(toastGuard);
-  const next = toastQueue.shift();
+  const gone = toastGone; toastGone = undefined; gone?.();
+  let next = toastQueue.shift();
+  if (!next && toastMissed) { next = { title: t('toast.more', { n: toastMissed }), message: t('toast.moreText'), long: true, click: () => showDrafts(true) }; toastMissed = 0; }
   if (next) toast(next, true);
 }
 const recent: { at: number; title: string; click?: () => void }[] = []; // the last 10 toasts, for the tray menu
@@ -346,12 +350,13 @@ function toast(item: Toast, fromQueue = false) {
     recent.splice(10);
     refreshTray();
   }
-  if (toastOn) { if (toastQueue.length < 5) toastQueue.push(item); return; } // ponytail: 5 waiting; more in a burst are dropped
+  if (toastOn) { if (toastQueue.length < 5 || item.stay) toastQueue.push(item); else toastMissed++; return; } // a question to the user is never dropped
   toastOn = true;
-  toastGuard = setTimeout(nextToast, 60_000); // the card never reported back (its page crashed): don't block the rest
-  const { click, long, actions = [], ...card } = item;
+  if (!item.stay) toastGuard = setTimeout(nextToast, 60_000); // the card never reported back (its page crashed): don't block the rest
+  const { click, long, stay, gone, actions = [], ...card } = item;
   toastHandlers = [click, ...actions.map(a => a.run)];
-  const payload = { ...card, actions: actions.map(a => a.label), icon: APP_ICON_URL, life: long ? 10_000 : 4_000, // 10 s for what the user should act on
+  toastGone = gone;
+  const payload = { ...card, actions: actions.map(a => a.label), icon: APP_ICON_URL, life: stay ? 0 : long ? 10_000 : 4_000, // 10 s for what the user should act on
     closeLabel: t('toast.close') };
   if (toastWin) return toastWin.webContents.send('toast', payload);
   toastWin = new BrowserWindow({ width: 392, height: 160, show: false, frame: false, transparent: true, resizable: false, focusable: false,
@@ -374,8 +379,14 @@ handle('toast:focus', () => { clearTimeout(toastGuard); toastWin?.setFocusable(t
 handle('toast:hidden', () => toastWin?.close());
 handle('toast:click', (_e, action: number) => { // -1 = the card itself
   const run = toastHandlers[action + 1];
+  if (run) toastGone = undefined; // answered: not "closed without an answer"
   toastWin?.close();
   run?.();
+});
+// a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come
+handle('draft:keep', (_e, n: string, text: unknown) => {
+  const d = state.drafts[String(n)];
+  if (d?.status === 'pending' && typeof text === 'string' && text.trim()) { d.text = text.slice(0, 5000); draftsChanged(); }
 });
 
 const TEAMS_PAGE = teams.TEAMS_PAGE;

@@ -12,7 +12,7 @@
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); }
   body { display: flex; flex-direction: column; justify-content: flex-end; }
   [hidden] { display: none !important; }
-  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 36px 1fr auto; gap: 0 12px; align-items: start; position: relative;
+  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 0 12px; align-items: start; position: relative;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.28); cursor: pointer;
     opacity: 0; transform: translateY(110%); transition: opacity .38s cubic-bezier(.215,.61,.355,1), transform .38s cubic-bezier(.215,.61,.355,1); }
   .card.shown { opacity: 1; transform: none; }
@@ -93,8 +93,12 @@
   // Texts come from Teams: textContent only.
   const $ = id => document.getElementById(id);
   const card = $('card');
-  let life = 4000, timer, leaving, n = null, replying = false, variants = [], next = 0;
-  const arm = () => { clearTimeout(timer); if (!replying) timer = setTimeout(leave, life); };
+  let life = 4000, timer, leaving, n = null, replying = false, variants = [], next = 0, keys = false, sending = false, idle;
+  // life 0: a question to the user, the card waits for the answer
+  const arm = () => { clearTimeout(timer); if (!replying && life) timer = setTimeout(leave, life); };
+  // A card left with the reply field open: after 2 minutes without a key, what is typed waits in "Replies" and the card goes,
+  // so the cards after it come.
+  const stillHere = () => { clearTimeout(idle); if (replying) idle = setTimeout(() => { const v = $('field').value.trim(); if (v) bridge.invoke('draft:keep', n, v); leave(); }, 120_000); };
   function leave() {
     clearTimeout(timer);
     card.classList.add('leaving'); card.classList.remove('shown');
@@ -115,14 +119,14 @@
     $('message').textContent = t.message || '';
     say(t.hint || '');
     $('close').title = t.closeLabel;
-    n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false;
+    n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false; keys = false; sending = false; clearTimeout(idle);
     $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
     for (const b of document.querySelectorAll('[data-react]')) b.hidden = false;
     $('ai').hidden = !t.reply?.ai;
     $('quick').replaceChildren(...(t.reply?.quick ?? []).map(q => {
       const b = document.createElement('button');
       b.textContent = q;
-      b.onclick = e => { e.stopPropagation(); $('field').value = q; $('field').focus(); };
+      b.onclick = e => { e.stopPropagation(); $('field').value = q; engage(); };
       return b;
     }));
     const buttons = t.actions.map((label, i) => { // a message card puts them in its "⋯" menu
@@ -144,20 +148,28 @@
 
   // ---- a message card ----
   $('open').onclick = e => { e.stopPropagation(); openField(true); };
-  async function openField(stay) { // the field opens in the card and takes the keyboard; stay: the card waits, however long the user types
-    replying = stay; clearTimeout(timer);
+  // The field opens in the card. stay ("Reply"): it takes the keyboard and the card waits, however long the user types.
+  // After a quick reaction it only shows: the keyboard stays where the user is typing until they click into the field.
+  async function openField(stay) {
+    clearTimeout(timer);
     $('open').hidden = true; $('reply').hidden = false; $('quick').hidden = !$('quick').children.length;
     if (variants.length && !$('field').value) $('field').value = variants[next++ % variants.length]; // already made: drafts mode
-    await bridge.invoke('toast:focus');
     await fit();
-    $('field').focus();
-    arm();
+    if (stay) await engage(); else arm();
   }
-  $('field').oninput = () => { replying = true; clearTimeout(timer); }; // typing: the card stays
+  // The user turns to the card: it takes the keyboard (once) and stays.
+  async function engage() {
+    replying = true; clearTimeout(timer); stillHere();
+    if (!keys) { keys = true; await bridge.invoke('toast:focus'); }
+    $('field').focus();
+  }
+  $('field').onpointerdown = () => { if (!keys) engage(); };
+  $('field').oninput = () => { replying = true; clearTimeout(timer); stillHere(); }; // typing: the card stays
   // ✨: the AI's variant into the field, to edit before sending; again: the next one. Text of the user's own in the field is what
   // the reply must say: the AI writes the variants after it.
   $('ai').onclick = async e => {
     e.stopPropagation();
+    engage();
     const typed = $('field').value.trim(), hint = typed && !variants.includes(typed) ? typed : '';
     if (!variants.length || hint) {
       busy(true); $('ai').classList.add('spin'); say(t('card.thinking'));
@@ -188,7 +200,7 @@
   $('send').onclick = e => { e.stopPropagation(); send(); };
   $('field').onkeydown = e => {
     if (e.key === 'Enter') send();
-    if (e.key === 'Escape') { replying = false; $('reply').hidden = $('quick').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
+    if (e.key === 'Escape') { replying = false; clearTimeout(idle); $('reply').hidden = $('quick').hidden = true; $('open').hidden = false; $('field').value = ''; fit(); arm(); }
   };
   $('reply').onclick = $('quick').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
   for (const img of document.querySelectorAll('[data-react] img')) { // Teams' animated picture by the reaction's id; offline, the font's glyph
