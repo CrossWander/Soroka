@@ -81,7 +81,7 @@ Without any AI, Soroka still notifies, lets you reply by hand and makes the extr
 - **Nothing is sent without your click.** That covers cards, the panel and requests from AI sessions on your computer (see the local API below).
 - **Where your chats go.** The text of a chat goes only to the AI whose model you chose, under your plan's terms. Ollama keeps it on your computer. Free plans may train on what they get, so use a work plan for work chats.
 - **«Not to AI».** Chats and people on this list never reach the AI. Their messages are also cut out of other chats' transcripts.
-- **No tools for background AI.** What Soroka asks the AI on its own (reply variants made ahead for new messages, AI sorting, the daily digest) goes only to an AI without tools: Claude, Codex with its tools switched off, or Ollama. A message in a chat cannot make the AI run commands, read files or open sites.
+- **No tools for background AI.** What Soroka asks the AI on its own (reply variants made ahead for new messages, AI sorting, the daily digest) goes only to an AI without tools: Claude, Codex with its tools switched off, or Ollama when you picked it. A message in a chat cannot make the AI run commands, read files or open sites. Gemini, Antigravity, Copilot and Cursor have tools of their own: they answer only on your click, and see chats only after you allow it once.
 - **Your data stays local.** Your Teams session, settings and the local API token live in `%APPDATA%\Soroka`. Soroka has no server of its own and sends no telemetry. Once a day it asks GitHub whether a newer version is out; that request carries nothing about you.
 - **The local API is local only.** It listens on `127.0.0.1` and needs the token. It turns away requests from browser pages.
 

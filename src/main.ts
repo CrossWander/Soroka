@@ -143,6 +143,7 @@ const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string
   activitySeen: [] as string[], reactions: [] as string[], // activitySeen: Activity items already looked at; reactions: the user's recent ones
   asked: {} as Record<string, { title: string; text: string; at: number; told?: boolean }>, // asked: per chat, the user's own question still unanswered
   checkWarned: '', // checkWarned: "version|missing parts" the self-check last warned about
+  toolsOk: [] as string[], // toolsOk: the AIs with tools of their own the user let read chats
   callBounds: null as Electron.Rectangle | null }); // callBounds: where the user left the call window
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
@@ -836,9 +837,16 @@ async function handoff(req: Request, key: 'draftModel' | 'summaryModel') {
 // One answer for this purpose. When its AI is past its limit or signed out, the next AI ready answers the same request
 // (one without tools: modelFor). auto: the app asks on its own (drafts mode, "AI sorts", the digest), not on the user's click.
 async function askAi(req: Request, key: 'draftModel' | 'summaryModel', signal?: AbortSignal, auto = false) {
+  const name = (m: string) => aiInfo.find(i => i.id === ai.providerOf(m))?.name ?? m;
   for (const tried = new Set<string>(); ;) {
     const model = modelFor(key, auto);
     if (!model && auto && usable().length) throw new Error(t('err.aiAuto')); // only AIs with tools are ready: they answer on a click only
+    // an AI with tools of its own gets chats once the user allowed it: a message could make it read files or open sites
+    if (model && !sealed(model) && !state.toolsOk.includes(ai.providerOf(model))) {
+      toast({ title: t('toast.aiTools', { name: name(model) }), message: t('toast.aiToolsText'), tone: 'error', long: true,
+        actions: [{ label: t('act.allow'), run: () => { state.toolsOk.push(ai.providerOf(model)); saveState(); } }] });
+      throw new Error(t('err.aiTools', { name: name(model) }));
+    }
     tried.add(model);
     try { return await ai.ask(req.system, req.prompt, model, signal); }
     catch (e) {
@@ -846,7 +854,6 @@ async function askAi(req: Request, key: 'draftModel' | 'summaryModel', signal?: 
       if (kind === 'limit') limited[ai.providerOf(model)] = Date.now() + 15 * 60_000; else aiFailed(e); // signed out: no longer ready
       const next = modelFor(key, auto);
       if (!kind || !next || tried.has(next)) throw e;
-      const name = (m: string) => aiInfo.find(i => i.id === ai.providerOf(m))?.name ?? m;
       if (kind === 'limit') toast({ title: t('toast.aiLimit', { name: name(model) }), message: t('toast.aiLimitText', { name: name(next) }) });
     }
   }
