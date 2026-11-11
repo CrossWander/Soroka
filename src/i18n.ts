@@ -377,7 +377,7 @@ const S: Record<string, [string, string, string]> = {
   'diag.list': ['нові повідомлення', 'new messages', 'новые сообщения'],
   'diag.messages': ['читання чатів і підсумки', 'reading chats and summaries', 'чтение чатов и выжимки'],
   'diag.compose': ['надсилання відповідей', 'sending replies', 'отправка ответов'],
-  'diag.menu': ['тема Teams', 'Teams theme', 'тема Teams'],
+  'diag.menu': ['тема й мова Teams', 'Teams theme and language', 'тема и язык Teams'],
   'toast.teamsChanged': ['Teams змінився', 'Teams has changed', 'Teams изменился'],
   'toast.teamsChangedText': ['Може не працювати: {list}. Звіт для автора — у налаштуваннях.', 'May not work: {list}. A report for the author is in Settings.', 'Может не работать: {list}. Отчёт для автора — в настройках.'],
   // test notification

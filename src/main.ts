@@ -181,6 +181,7 @@ function updateSettings(input: Record<string, unknown>) {
     for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin && w.webContents.getURL().startsWith('file:')) w.webContents.reload();
     settingsView?.webContents.reload(); // layers, not windows
     for (const page of Object.values(panelPages)) page.webContents.reload();
+    void applyTeamsLanguage();
   }
   refreshTray();
   return settings;
@@ -194,6 +195,20 @@ async function applyTheme() {
   if (await teams.themeFollowed().catch(() => true)) return;
   log('Teams theme does not follow the system: setting it');
   await serial(() => teams.followSystemTheme()).catch(e => log('theme:', errorText(e)));
+}
+// The user picked the app's language: Teams takes it too (its Settings → Language), once, on that pick. Set otherwise in
+// Teams itself later, it stays as the user set it there.
+async function applyTeamsLanguage() {
+  if (status !== 'ready') return;
+  const locale = i18n.current().locale;
+  // Teams reloads its page in the new language: connected again at once, in the queue, not when the timer finds it gone
+  await serial(async () => {
+    if (!(await teams.setLanguage(locale))) return;
+    log(`Teams language: ${locale}`);
+    await new Promise(r => { teamsPage.once('did-navigate', r); setTimeout(r, 15_000); }); // Teams saves it, then reloads itself: not cut short
+    await connect(false);
+  })
+    .catch(e => log('teams language:', errorText(e)));
 }
 const applyAutostart = () => app.setLoginItemSettings({
   openAtLogin: settings.autostart,

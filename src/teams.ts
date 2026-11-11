@@ -402,19 +402,43 @@ export const themeFollowed = (): Promise<boolean> => run(() => {
   const [r, g, b, a = 1] = (getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g) ?? []).map(Number);
   return !a || (r + g + b < 384) === matchMedia('(prefers-color-scheme: dark)').matches; // a transparent body tells nothing
 });
+const step = async (sel: string, what: string, timeout = 8000) => {
+  if (!(await exists(sel, timeout))) throw fail(502, `${what} not found in Teams`);
+  await click(sel);
+};
+// A section of Teams' settings (… → Settings → section); the caller goes back to the chats.
+async function settingsSection(section: string) {
+  await click('[data-tid="more-options-header"]');
+  await step('[data-tid="settings-button-menu"]', 'Settings', 3000);
+  await step(`[data-tid="${section}"]`, `the "${section}" settings`);
+}
 // Teams' own theme set to "as the operating system" (… → Settings → Appearance), so it follows the app's theme from then on.
 export async function followSystemTheme() {
-  await click('[data-tid="more-options-header"]');
   try {
-    const step = async (sel: string, what: string, timeout = 8000) => {
-      if (!(await exists(sel, timeout))) throw fail(502, `${what} not found in Teams`);
-      await click(sel);
-    };
-    await step('[data-tid="settings-button-menu"]', 'Settings', 3000);
-    await step('[data-tid="appearance"]', 'Appearance');
+    await settingsSection('appearance');
     await step('[data-tid="appearance-settings-theme-selector-dropdown"]', 'the theme choice');
     await step('[data-tid="appearance-settings-theme-selector-dropdown-followOsTheme-dropdown-option"]', 'the "as the system" theme', 3000);
   } finally { await showChats(); }
+}
+// Teams' app language (Settings → General → "Language and regional formats"): the locale's option ("uk-UA"), then "Save and
+// restart", and Teams reloads its page in it. Its switch "Use the Microsoft 365 account's language" goes off first: on, it keeps
+// the account's language. false: Teams has that language already, nothing changed.
+export async function setLanguage(locale: string) {
+  let applied = false;
+  try {
+    await settingsSection('general');
+    if (!(await exists('[data-tid="language-dropdown-combobox"]', 8000))) throw fail(502, 'the language choice not found in Teams');
+    const SWITCH = '[data-tid="language-switch-toggle-switch"]';
+    if (await run(s => document.querySelector(s)?.getAttribute('data-checked') === 'true', SWITCH)) await click(SWITCH);
+    await click('[data-tid="language-dropdown-combobox"]');
+    const option = `[data-tid="language-dropdown-${locale.toLowerCase()}-combobox-option"]`;
+    if (!(await exists(option, 4000))) { await press('Escape'); throw fail(404, `Teams has no language ${locale}`); }
+    if (await run(s => document.querySelector(s)?.getAttribute('aria-selected') === 'true', option)) { await press('Escape'); return false; }
+    await click(option);
+    await step('[data-tid="apply-language-change-button"]', '"Save and restart"', 4000);
+    applied = true;
+    return true;
+  } finally { if (!applied) await showChats().catch(() => {}); } // applied: the page reloads by itself
 }
 
 // ---------- Activity: mentions in channels ----------
