@@ -388,6 +388,17 @@ handle('draft:keep', (_e, n: string, text: unknown) => {
   const d = state.drafts[String(n)];
   if (d?.status === 'pending' && typeof text === 'string' && text.trim()) { d.text = text.slice(0, 5000); draftsChanged(); }
 });
+// A Claude session sends only what the user confirms in the app too: a card with the chat and the text, and the request
+// waits for the click. No answer in 3 minutes, or the card closed: not sent.
+function confirmSend(title: string, text: string) {
+  return new Promise<boolean>(ok => {
+    let done = false;
+    const answer = (yes: boolean) => { if (!done) { done = true; clearTimeout(timer); ok(yes); } };
+    const timer = setTimeout(() => answer(false), 3 * 60_000);
+    toast({ title: t('toast.claudeSends', { title }), message: text, tone: 'accent', stay: true, gone: () => answer(false),
+      actions: [{ label: t('act.send'), run: () => answer(true) }, { label: t('act.dontSend'), run: () => answer(false) }] });
+  });
+}
 
 const TEAMS_PAGE = teams.TEAMS_PAGE;
 function createTeamsWindow() {
@@ -1624,10 +1635,12 @@ function startApi() {
         const r = await windowAnswer(c.id, c.title, `n${Number(url.searchParams.get('n') ?? 100)}`, { plain: url.searchParams.has('plain') }); // plain: no tokens
         return json(res, 200, { chat: c.title, summary: r.text, count: r.count });
       }
-      if (route === 'POST /send') {
+      if (route === 'POST /send') { // goes out once the user confirms it in the app's card (confirmSend)
         const { chat, text } = await body(req);
-        need(chat && text?.trim(), 'chat and text');
-        return json(res, 200, await serial(async () => teams.send(await teams.findChat(chat), withLabel(text))));
+        need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
+        const c = await serial(() => teams.findChat(chat));
+        if (!(await confirmSend(c.title, withLabel(text)))) return json(res, 403, { error: 'not sent: the user did not confirm it' });
+        return json(res, 200, await inChat(c.id, () => teams.send(c, withLabel(text))));
       }
       if (route === 'POST /draft') { // an answer card the user sends or rejects; nothing leaves without their click
         const { chat, text, note } = await body(req);
@@ -1644,8 +1657,10 @@ function startApi() {
       }
       if (route === 'POST /send-gif') {
         const { chat, query, src, text } = await body(req); // text: sent in the same message, before the GIF
-        need(chat && query?.trim(), 'chat and query');
-        return json(res, 200, await serial(async () => teams.sendGif(await teams.findChat(chat), query.trim(), src, text?.trim() ? withLabel(text) : undefined)));
+        need(typeof chat === 'string' && typeof query === 'string' && query.trim(), 'chat and query');
+        const c = await serial(() => teams.findChat(chat)), said = typeof text === 'string' && text.trim() ? withLabel(text) : undefined;
+        if (!(await confirmSend(c.title, `${said ? `${said}\n` : ''}GIF: ${query.trim()}`))) return json(res, 403, { error: 'not sent: the user did not confirm it' });
+        return json(res, 200, await inChat(c.id, () => teams.sendGif(c, query.trim(), typeof src === 'string' ? src : undefined, said)));
       }
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, (e as { status?: number }).status ?? 500, { error: errorText(e) }); }

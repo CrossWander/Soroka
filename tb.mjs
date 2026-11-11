@@ -37,7 +37,8 @@ if (cmd === 'chats') {
   const r = await call(`/summary?chat=${encodeURIComponent(a)}&n=${Number(b ?? 100)}${c === 'plain' ? '&plain' : ''}`); // plain: by rules, no AI
   console.log(`# ${r.chat}
 ${r.summary}`);
-} else if (cmd === 'send' && a && b) {
+} else if (cmd === 'send' && a && b) { // the app asks the user in a card first; waits up to 3 minutes for the click
+  console.log('waiting for the user to confirm it in Soroka…');
   console.log(`sent to ${(await post('/send', { chat: a, text: b })).chat}`);
 } else if (cmd === 'draft' && a && b) {
   console.log(`draft #${(await post('/draft', { chat: a, text: b, note: c })).draft} is in the popup, waiting for the user`);
@@ -45,7 +46,8 @@ ${r.summary}`);
   await post('/notify', { title: a, message: b }); console.log('shown');
 } else if (cmd === 'gifs' && a) {
   (await post('/gif-search', { query: a, n: Number(b ?? 6) })).forEach((g, i) => console.log(`${i + 1}. ${g.label}\n   ${g.src}`));
-} else if (cmd === 'gif' && a && b) {
+} else if (cmd === 'gif' && a && b) { // confirmed in a card first, as send
+  console.log('waiting for the user to confirm it in Soroka…');
   const r = await post('/send-gif', { chat: a, query: b, src: c || undefined, text: process.argv[6] }); // text goes in the same message
   console.log(`sent "${r.gif}" to ${r.chat}`);
 } else {
