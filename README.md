@@ -1,12 +1,23 @@
-# Soroka
+<p align="center"><img src="docs/icon.png" width="112" alt="Soroka's icon: a magpie whose wing is an embroidered sleeve"></p>
 
-**English** · [Українська](README.uk.md)
+<h1 align="center">Soroka</h1>
+
+<p align="center"><b>English</b> · <a href="README.uk.md">Українська</a></p>
 
 Soroka is a Windows tray app for Microsoft Teams (work or school accounts). It runs Teams on the web inside its own window, which can stay hidden. It brings personal messages, @mentions and calls to small cards in the corner of the screen, and lets you reply, react or get a summary from the card without opening Teams.
 
 Replies and summaries can be written by the AI of the subscription you already pay for: Claude Code, Codex (ChatGPT), Gemini CLI and others. There are no API keys and no extra bills. Nothing is ever sent without your click.
 
 > Soroka is an independent project. It is not affiliated with, endorsed by or supported by Microsoft. It works with the Teams web app as it looks today, so a Teams update can break parts of it until Soroka is updated.
+
+<p align="center"><img src="docs/screenshots/main-en.png" width="820" alt="Soroka's window: the title bar with the Soroka menu open, Teams below it and the Replies panel on the right"></p>
+
+Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the actions for the chat you have open: suggest a reply, improve your text, a summary, reload Teams. ▤ opens the Replies panel on the right, and ⚙ opens the settings. (Teams itself is left out of the picture.)
+
+<p align="center">
+  <img src="docs/screenshots/card-en.png" width="392" alt="A message card with an AI reply in the field, quick phrases and reactions">
+  <img src="docs/screenshots/call-en.png" width="392" alt="An incoming call card">
+</p>
 
 ## Features
 
@@ -26,6 +37,8 @@ Replies and summaries can be written by the AI of the subscription you already p
 **Summaries**
 - A summary of one chat for a chosen period, of several chats at once, «What I missed» or the daily digest. You can also ask a question about a chat instead.
 - «Extract, no AI» works without any AI: it lists what waits for you, tasks, links, files, dates and who wrote.
+
+<p align="center"><img src="docs/screenshots/summary-en.png" width="360" alt="A chat summary in the panel"></p>
 
 **Calls**
 - An incoming call or a started meeting shows a card at the top right with Teams' own buttons.
@@ -57,6 +70,8 @@ Soroka finds the AI programs installed on your computer and uses the plan you ar
 «Refresh» in Settings → AI asks each program which models your plan includes. You choose one model for replies and one for summaries. If a model hits its limit, the next ready one answers.
 
 Live-tested: Claude Code and Codex. The others follow their documentation.
+
+<p align="center"><img src="docs/screenshots/settings-en.png" width="720" alt="Settings → AI"></p>
 
 Without any AI, Soroka still notifies, lets you reply by hand and makes the extract without AI. «Do not use AI» in the settings turns AI off completely.
 
