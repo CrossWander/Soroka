@@ -758,7 +758,8 @@ type Request = { system: string; prompt: string };
 // "Tone per person": lines "name: tone"; the one whose name is in the chat title applies on top of the user's style.
 const toneFor = (title: string) => settings.tones.split('\n').map(l => l.split(':')).filter(([name, tone]) => name?.trim() && tone?.trim())
   .find(([name]) => title.toLowerCase().includes(name.trim().toLowerCase()))?.slice(1).join(':').trim();
-const variantsRequest = (d: Draft): Request => { notToAi(d.title); return {
+// hint: what the user wants the reply to say ("decline politely, I'll do it tomorrow"), typed in the card before ✨
+const variantsRequest = (d: Draft, hint = ''): Request => { notToAi(d.title); return {
   system: `${RULES}\nThe user's style: ${settings.style || t('style.default')}\n`
     // the manner of this chat, from the user's own lines in it; a tone set for the person still comes last and wins
     + 'Where "Me" writes in the transcript, write the way they write in this chat (language, formal or informal address, length, emoji) rather than by the general style.\n'
@@ -772,9 +773,12 @@ const variantsRequest = (d: Draft): Request => { notToAi(d.title); return {
         + 'neutral; warmer, with a light touch; brief and direct. Do not repeat the question word for word. '
         + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.'
       : 'Suggest three replies to the latest message addressed to the user: short; more detailed; lighter, with humour. '
-        + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.'),
+        + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.')
+    + (hint ? '\nThe user said what the reply must say (their note to you, below the transcript): every version says that, in their manner; '
+      + 'it decides the content over anything you would infer from the transcript.' : ''),
   prompt: `Chat: ${d.title}\nTranscript:\n<<<\n${(d.context ?? []).join('\n')}\n>>>`
-    + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.nudge ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : ''),
+    + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.nudge ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : '')
+    + (hint ? `\nWhat the reply must say:\n<<<\n${hint}\n>>>` : ''),
 }; };
 // For people without an AI program, or past its limits: the request goes to the clipboard and their AI's chat site
 // opens (the one in the settings, else the model's); they paste it.
@@ -803,9 +807,9 @@ async function askAi(req: Request, key: 'draftModel' | 'summaryModel', signal?: 
   }
 }
 
-async function variants(d: Draft) {
-  const req = variantsRequest(d);
-  const out = await askAi(req, 'draftModel');
+async function variants(d: Draft, hint: string, auto: boolean) {
+  const req = variantsRequest(d, hint);
+  const out = await askAi(req, 'draftModel', undefined, auto);
   try {
     const list = JSON.parse(out.slice(out.indexOf('['), out.lastIndexOf(']') + 1));
     if (Array.isArray(list)) return list.filter((x): x is string => typeof x === 'string' && !!x.trim()).slice(0, 4);
@@ -813,19 +817,27 @@ async function variants(d: Draft) {
   return [out];
 }
 
-// "Suggest a reply": three variants into the answer card; the first one also into its text field.
-async function suggest(n: string) {
+// "Suggest a reply": three variants into the answer card; the first one also into its text field. One run per card at a time:
+// asked again meanwhile (the toast's ✨ while drafts mode is at it), the caller waits for the run going on.
+const suggesting = new Map<string, Promise<void>>();
+function suggest(n: string, { hint = '', auto = false } = {}) {
   const d = state.drafts[n];
-  if (d?.status !== 'pending' || d.busy) return;
+  if (d?.status !== 'pending') return Promise.resolve();
+  const going = suggesting.get(n);
+  if (going) return going;
   d.busy = true; delete d.error; draftsChanged();
-  try {
-    await working(t('busy.reply', { title: d.title }), async () => {
-      if (!d.context?.length) d.context = (await serial(() => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
-      d.variants = await variants(d);
-      if (!d.text) d.text = d.variants[0] ?? '';
-    });
-  } catch (e) { d.error = errorText(e); aiFailed(e); log('suggest:', d.error); }
-  finally { d.busy = false; draftsChanged(); }
+  const run = (async () => {
+    try {
+      await working(t('busy.reply', { title: d.title }), async () => {
+        if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
+        d.variants = await variants(d, hint.trim().slice(0, 1000), auto);
+        if (!d.text || hint) d.text = d.variants[0] ?? '';
+      });
+    } catch (e) { d.error = errorText(e); aiFailed(e); log('suggest:', d.error); }
+    finally { d.busy = false; suggesting.delete(n); draftsChanged(); }
+  })();
+  suggesting.set(n, run);
+  return run;
 }
 
 // The last n messages, those newer than `since`, or those after the user's own last message; at most 500.
@@ -1400,7 +1412,12 @@ handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, qu
   return react(String(n), String(id), tab, quiet === true);
 }));
 // the variants come back to the caller: a card asks for a snoozed draft too, which the answers list leaves out
-ipcMain.handle('draft:suggest', async (_e, n: string) => { await suggest(n); const d = state.drafts[n]; return { variants: d?.variants ?? [], error: d?.error }; });
+// hint: what the reply must say, typed by the user before ✨
+handle('draft:suggest', async (_e, n: string, hint: unknown) => {
+  await suggest(String(n), { hint: typeof hint === 'string' ? hint : '' });
+  const d = state.drafts[String(n)];
+  return { variants: d?.variants ?? [], error: d?.error };
+});
 handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
 handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
 handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; } draftsChanged(); });

@@ -96,7 +96,13 @@
       send.disabled = reject.disabled = true;
       try { await fn(); } catch (e) { err.textContent = errorText(e); send.disabled = reject.disabled = false; }
     };
-    suggest.onclick = () => bridge.invoke('draft:suggest', d.n);
+    // text of the user's own in the field (not the AI's): what the reply must say, the AI writes the variants after it
+    let current = d, placed = ''; // placed: the text the app last put in the field
+    suggest.onclick = () => {
+      const typed = area.value.trim(), hint = typed && typed !== current.text && !(current.variants || []).includes(typed) ? typed : '';
+      if (hint) area.value = '';
+      bridge.invoke('draft:suggest', d.n, hint);
+    };
     send.onclick = () => act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked));
     reject.onclick = () => act(() => bridge.invoke('draft:reject', d.n));
     area.onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) send.click(); };
@@ -104,6 +110,7 @@
     const foot = el('footer'); foot.append(suggest, react, decide);
     box.append(said, jira, variants, quick, busy, area, quoteRow, err, foot);
     box.update = (d, ready, aiOff, phrases) => {
+      current = d;
       quick.replaceChildren(...(d.improve || d.nudge ? [] : phrases).map(q => { // the user's own text or a nudge: no quick answer fits
         const b = el('button', '', q);
         b.onclick = () => { area.value = q; [...variants.children].forEach(x => x.classList.remove('on')); area.focus(); };
@@ -128,7 +135,8 @@
       suggest.title = ready ? '' : t('ai.needed');
       suggest.textContent = d.variants?.length ? t('drafts.more') : t('drafts.suggest');
       err.textContent = d.error || '';
-      if (!area.value && d.text) area.value = d.text; // never overwrite what the user is typing
+      // the app's text replaces its own older one, never what the user typed or picked; not while the AI is at a new one
+      if (d.text && !d.busy && (!area.value || area.value === placed)) area.value = placed = d.text;
       variants.replaceChildren(...(d.variants || []).map(v => {
         const b = el('button', area.value === v ? 'on' : '', v);
         b.onclick = () => { area.value = v; [...variants.children].forEach(x => x.classList.toggle('on', x === b)); area.focus(); };

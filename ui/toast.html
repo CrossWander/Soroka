@@ -154,13 +154,16 @@
     arm();
   }
   $('field').oninput = () => { replying = true; clearTimeout(timer); }; // typing: the card stays
-  $('ai').onclick = async e => { // the AI's variant into the field, to edit before sending; again: the next one
+  // ✨: the AI's variant into the field, to edit before sending; again: the next one. Text of the user's own in the field is what
+  // the reply must say: the AI writes the variants after it.
+  $('ai').onclick = async e => {
     e.stopPropagation();
-    if (!variants.length) {
+    const typed = $('field').value.trim(), hint = typed && !variants.includes(typed) ? typed : '';
+    if (!variants.length || hint) {
       busy(true); $('ai').classList.add('spin'); say(t('card.thinking'));
       try {
-        const d = await bridge.invoke('draft:suggest', n);
-        variants = d.variants;
+        const d = await bridge.invoke('draft:suggest', n, hint);
+        variants = d.variants; next = 0;
         say(d.error || '', !!d.error);
       } catch (err) { say(failed(err), true); }
       finally { busy(false); $('ai').classList.remove('spin'); }
