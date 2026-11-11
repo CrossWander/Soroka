@@ -284,7 +284,7 @@ export async function watchCall(onChange: (on: string) => void) {
 // ---------- Jira: a ticket's status and name in the chat's messages ----------
 // In a message's text (not in link previews, not in the compose box):
 // - a link to <base>/browse/KEY gets data-tb-jira, which the app's style draws after the link;
-// - a bare key ("POS20-13443") Jira knows is underlined and opens in Jira on a click, and the text goes after the run of
+// - a bare key ("PROJ-123") Jira knows is underlined and opens in Jira on a click, and the text goes after the run of
 //   text it stands in, in an empty element of the app's own, also drawn by the style.
 // Teams draws its messages with React, which keeps its own text nodes: they are never cut or changed. The underline is a
 // CSS highlight (no element), the click is caught on the document, the app's elements are only added next to Teams' own;
