@@ -288,6 +288,8 @@ const S: Record<string, [string, string, string]> = {
   'set.linksApp': ['відкривати в Сороці', 'open in Soroka', 'открывать в Сороке'],
   'set.linksBrowser': ['відкривати в браузері', 'open in the browser', 'открывать в браузере'],
   'set.linksNote': ['З повідомлень Teams і тікети Jira з карток. У Сороці Microsoft 365 відкривається вже з входом; застосунки з меню Office у Teams — завжди тут.', 'From Teams messages, and Jira tickets from the cards. In Soroka, Microsoft 365 opens signed in; the apps of Teams’ Office menu always open here.', 'Из сообщений Teams и тикеты Jira из карточек. В Сороке Microsoft 365 открывается уже с входом; приложения из меню Office в Teams — всегда здесь.'],
+  'set.officeMenu': ['Меню Office у Teams', 'Office menu in Teams', 'Меню Office в Teams'],
+  'set.officeMenuNote': ['Кнопка-сітка зліва вгорі: Outlook, Word, OneDrive… Вимкніть, якщо не користуєтеся.', 'The dotted grid top left: Outlook, Word, OneDrive… Turn it off if you never use it.', 'Кнопка-сетка слева вверху: Outlook, Word, OneDrive… Выключите, если не пользуетесь.'],
   'set.jira': ['Jira', 'Jira', 'Jira'],
   'set.jiraPh': ['адреса Jira для посилань на задачі; порожньо — вимкнено', 'Jira address for issue links; empty — off', 'адрес Jira для ссылок на задачи; пусто — выключено'],
   'set.tonesPh': ['Тон для окремих людей, по рядку: «Савіч: неформально, з гумором», «Керівник: офіційно, коротко»', 'Tone for particular people, a line each: “Savich: casual, with humour”, “Manager: formal, short”', 'Тон для отдельных людей, по строке: «Савич: неформально, с юмором», «Руководитель: официально, коротко»'],

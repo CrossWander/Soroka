@@ -36,7 +36,7 @@ const errorText = (e: unknown) => (e as Error).message;
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
+  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; officeMenu: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
 const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-haiku-5-5'];
@@ -45,6 +45,7 @@ const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:cl
 // followUpAfter: the same for the user's own question that nobody answered
 // webChat: the site "Open in AI chat" opens; '' = the one of the model's provider, else claude.ai
 // links: where web links from Teams and the cards open; '' = a window of the app, 'browser' = the default browser
+// officeMenu: the button of Teams' Office menu (the dotted grid top left); false hides it
 const OPTIONS: Record<string, unknown[]> = { wakeMode: ['notify', 'drafts', 'monitor'], language: i18n.LANGS, remindAfter: ['', '60', '240', '1440'],
   followUpAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'], links: ['', 'browser'],
   webChat: ['', ...Object.keys(ai.WEB)] };
@@ -52,14 +53,14 @@ const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
+  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
 const isTime = (v: unknown) => v === '' || (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const CHECKS: Record<string, (v: unknown) => boolean> = {
   style: isText(3000), onlyFrom: isText(1000), keywords: isText(1000), quietFrom: isTime, quietTo: isTime, digestAt: isTime,
-  muteFrom: isText(1000), tones: isText(3000), quickReplies: isText(500), quietDnd: v => typeof v === 'boolean', triage: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
+  muteFrom: isText(1000), tones: isText(3000), quickReplies: isText(500), quietDnd: v => typeof v === 'boolean', triage: v => typeof v === 'boolean', officeMenu: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
   jiraUrl: v => v === '' || (isText(200)(v) && /^https:\/\/[^\s/]+(\/\S*)?$/.test(v as string)),
   label: v => typeof v === 'boolean', autostart: v => typeof v === 'boolean', summaryBackground: v => typeof v === 'boolean',
   draftModel: v => usable().includes(v as string), summaryModel: v => usable().includes(v as string),
@@ -145,6 +146,7 @@ function updateSettings(input: Record<string, unknown>) {
   if (settings.autostart !== old.autostart) applyAutostart();
   if (settings.theme !== old.theme) void applyTheme();
   if (settings.aiOff !== old.aiOff) void refreshAi();
+  if (settings.officeMenu !== old.officeMenu) void applyOfficeMenu();
   if (settings.language !== old.language) { // every window of the app redraws in the new language
     i18n.setLang(settings.language as i18n.Lang);
     for (const w of BrowserWindow.getAllWindows()) if (w !== toastWin) w.webContents.reload();
@@ -384,6 +386,12 @@ const layout = () => {
   side?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
   settingsView?.setBounds(r);
 };
+// The setting hides the button of Teams' Office menu in the main Teams page; the key takes the rule back.
+let officeMenuKey: string | undefined;
+async function applyOfficeMenu() {
+  if (officeMenuKey) { await teamsPage.removeInsertedCSS(officeMenuKey).catch(() => {}); officeMenuKey = undefined; }
+  if (!settings.officeMenu) officeMenuKey = await teamsPage.insertCSS('[data-tid="waffle-open-button"]{display:none!important}', { cssOrigin: 'user' });
+}
 // The Teams page of the main window. A call takes it to a window of its own (popOutCall), and a new one comes here.
 function newTeamsPage() {
   const view = teamsView = new WebContentsView({ webPreferences: { session: session.fromPartition('persist:teams'), backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
@@ -413,7 +421,10 @@ function newTeamsPage() {
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
   // Teams marks its header as a window drag area (app-region), for its own desktop app. In this frameless window Windows
   // took a click there for the start of a drag: the app launcher and the search box got none. The window drags by the strip.
-  page.on('dom-ready', () => void page.insertCSS('*{app-region:no-drag!important}', { cssOrigin: 'user' }));
+  page.on('dom-ready', () => {
+    void page.insertCSS('*{app-region:no-drag!important}', { cssOrigin: 'user' });
+    if (main()) { officeMenuKey = undefined; void applyOfficeMenu(); } // a new document has none of the old rules
+  });
   teams.attach(page);
 }
 // Teams reports a change of the unread chats: look at once instead of waiting for the timer
