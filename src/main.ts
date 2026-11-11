@@ -90,7 +90,7 @@ const usable = () => Object.entries(models()).filter(([, s]) => !s || s === 'ok'
 const limited: Record<string, number> = {};
 const free = (m: string) => !(limited[ai.providerOf(m)] > Date.now());
 // An AI without tools (ai.SEALED): what a chat says cannot make it run or open anything.
-const sealed = (m: string) => ai.SEALED.includes(ai.providerOf(m));
+const sealed = (m: string) => ai.SEALED.includes(ai.providerOf(m)) && !aiInfo.find(i => i.id === ai.providerOf(m))?.tools;
 // The model the user chose for this, or the first one ready while that one is not (its AI signed out or past its limit);
 // another AI takes over only when it has no tools. auto: the app asks on its own, not on the user's click — an AI without tools only.
 const modelFor = (key: 'draftModel' | 'summaryModel', auto = false) => {

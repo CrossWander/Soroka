@@ -9,7 +9,8 @@ import * as claude from './claude';
 import { t } from './i18n';
 
 export type Info = { id: string; name: string; path?: string; version?: string; loggedIn?: boolean; plan?: string; expiresAt?: string;
-  api?: boolean; error?: string; ready: boolean }; // loggedIn undefined: the program cannot tell; the first answer will
+  api?: boolean; error?: string; tools?: boolean; ready: boolean }; // loggedIn undefined: the program cannot tell; the first answer will
+  // tools: an AI of SEALED that may have a tool on after all (Codex with a feature nobody reviewed): it answers on a click only
 type Found = Omit<Info, 'id' | 'name' | 'ready'>;
 type Provider = { id: string; name: string; install: string; web?: string; login?: string[]; // login: arguments that sign in, in a terminal
   exe: () => string | undefined; info: (exe: string) => Promise<Found>;
@@ -74,10 +75,21 @@ function asArg(name: string, text: string) {
 const both = (system: string, prompt: string) => `${system}\n\n${prompt}`; // for the programs without a separate system prompt
 const json = (out: string) => JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
 
-// ponytail: the feature names of Codex 0.162 (codex features list); an unknown name fails the run, a new tool feature stays on
-const CODEX_OFF = ['shell_tool', 'unified_exec', 'unified_exec_tty', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
-  'in_app_browser', 'apps', 'plugins', 'remote_plugin', 'image_generation', 'multi_agent', 'view_image', 'skill_search', 'sleep_tool', 'code_mode_host',
-  'tool_suggest', 'goals', 'collaboration_modes', 'hooks'];
+// Codex's features, reviewed in 0.162.1 (codex features list): CODEX_OFF are tools, CODEX_OK are not. Every feature on but
+// CODEX_OK goes off for a run, a new one too. While one on is in neither list nobody has looked at it: Codex then counts as
+// an AI with tools (Info.tools) and answers on a click only.
+const CODEX_OFF = ['shell_tool', 'unified_exec', 'unified_exec_tty', 'unified_exec_zsh_fork', 'shell_snapshot', 'write_stdin_approval', 'browser_use',
+  'browser_use_external', 'browser_use_full_cdp_access', 'browser_annotation_api', 'computer_use', 'in_app_browser', 'in_app_local_automation', 'apps',
+  'plugins', 'plugin_sharing', 'remote_plugin', 'skill_mcp_dependency_install', 'tool_call_mcp_elicitation', 'image_generation', 'multi_agent', 'view_image',
+  'skill_search', 'sleep_tool', 'code_mode_host', 'tool_suggest', 'goals', 'collaboration_modes', 'hooks', 'worktrees', 'workspace_dependencies',
+  'realtime_conversation'];
+const CODEX_OK = ['api_key_model_discovery', 'auth_elicitation', 'compaction_image_budget', 'content_item_kinds', 'daemon_auto_start',
+  'enable_request_compression', 'fast_mode', 'ultrafast_mode', 'guardian_approval', 'guardian_reuse_parent_compaction', 'in_app_chat', 'in_app_dictation',
+  'in_app_updates', 'in_app_voice', 'instant_interrupt', 'item_ids', 'mentions_v2', 'resize_all_images', 'secret_auth_storage', 'sqlite', 'steer',
+  'system_proxy_fallback', 'terminal_resize_reflow', 'tool_search_always_defer_mcp_tools', 'tui_app_server', 'unbounded_connection_retries'];
+// "name  stage  true|false" per line; the stage may be two words ("under development")
+const codexOn = async (exe: string) => (await run(exe, ['features', 'list'])).split('\n').map(l => l.trim().split(/\s+/))
+  .filter(w => w.length > 2 && w.at(-1) === 'true').map(w => w[0]);
 // No tools at all, so what a chat says cannot make them read files, run programs or open sites: only these answer on their own
 // (drafts mode, "AI sorts", the daily digest) and take over from another AI past its limit. The others run tools by their own
 // rules, with no switch that turns them all off, so they answer only when the user asks.
@@ -94,7 +106,9 @@ const PROVIDERS: Provider[] = [
     exe: () => onPath(['codex'], [path.join(LOCAL, 'Programs', 'OpenAI', 'Codex', 'bin')]),
     async info(exe) {
       const status = await said(exe, ['login', 'status']); // "Logged in using ChatGPT", "Logged in using an API key", "Not logged in"
-      return { version: await version(exe), loggedIn: /^logged in/im.test(status), api: /api key/i.test(status), plan: /chatgpt/i.test(status) ? 'ChatGPT' : undefined };
+      const on = await codexOn(exe).catch(() => undefined); // no list: nothing can be told about its tools
+      return { version: await version(exe), loggedIn: /^logged in/im.test(status), api: /api key/i.test(status), plan: /chatgpt/i.test(status) ? 'ChatGPT' : undefined,
+        tools: !on?.length || on.some(f => !CODEX_OFF.includes(f) && !CODEX_OK.includes(f)) };
     },
     // the catalog of this account; "hide" marks service models
     models: async exe => (json(await run(exe, ['debug', 'models'], { timeout: 60_000 })).models as { slug: string; visibility?: string }[])
@@ -103,8 +117,9 @@ const PROVIDERS: Provider[] = [
     // (commands, browser, computer use, apps, plugins, agents, web search): a chat's text cannot make it run or open anything —
     // asked to run a command, 0.162 said "I cannot run commands" with these off, and tried to run it without them.
     async ask(exe, system, prompt, model, signal) {
+      const off = (await codexOn(exe)).filter(f => !CODEX_OK.includes(f)); // only names this version has: an unknown one fails the run
       const out = await run(exe, ['exec', '-', '--json', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules',
-        '--sandbox', 'read-only', '--color', 'never', ...CODEX_OFF.flatMap(f => ['--disable', f]), '-c', 'web_search=disabled', ...(model ? ['-m', model] : [])],
+        '--sandbox', 'read-only', '--color', 'never', ...off.flatMap(f => ['--disable', f]), '-c', 'web_search=disabled', ...(model ? ['-m', model] : [])],
         { input: both(system, prompt), timeout: 300_000, signal })
         .catch(e => (e as { stdout?: string }).stdout || Promise.reject(e)); // a failed turn exits with 1 after its events
       const events = out.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l));
