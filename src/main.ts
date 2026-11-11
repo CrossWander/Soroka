@@ -1,7 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
+import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -353,16 +353,17 @@ ipcMain.handle('toast:click', (_e, action: number) => { // -1 = the card itself
   run?.();
 });
 
+const TEAMS_PAGE = /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//;
 function createTeamsWindow() {
   const ses = session.fromPartition('persist:teams');
   const platform = { win32: 'Windows NT 10.0; Win64; x64', darwin: 'Macintosh; Intel Mac OS X 10_15_7' }[process.platform as string] ?? 'X11; Linux x86_64';
   ses.setUserAgent(`Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`, 'ru-RU,ru');
-  // Calls and meetings are taken in this window: Teams' own pages get the microphone, camera and speaker choice, and
-  // writing to the clipboard (its "Copy link"); reading it they do not get.
-  // Its notifications stay off (the app shows its own); screen sharing needs a picker the app does not have yet.
-  const ALLOWED = ['media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write'];
-  ses.setPermissionRequestHandler((_wc, permission, done, details) =>
-    done(ALLOWED.includes(permission) &&/^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//.test(details.requestingUrl)));
+  // Calls and meetings are taken in this window: Teams' own pages get the microphone, camera and speaker choice, sharing
+  // a screen or a window the user picks (pickShare), and writing to the clipboard (its "Copy link"); reading it they do not get.
+  // Its notifications stay off (the app shows its own).
+  const ALLOWED = ['media', 'speaker-selection', 'fullscreen', 'clipboard-sanitized-write', 'display-capture'];
+  ses.setPermissionRequestHandler((_wc, permission, done, details) => done(ALLOWED.includes(permission) && TEAMS_PAGE.test(details.requestingUrl)));
+  ses.setDisplayMediaRequestHandler(pickShare);
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
     webPreferences: { preload } });
   teamsWin.removeMenu();
@@ -1077,6 +1078,34 @@ function popOutCall() {
   void serial(() => connect(false)).catch(e => log('call: chats page:', errorText(e)));
 }
 
+// ---------- sharing a screen or a window in a call ----------
+// Teams asks with getDisplayMedia; Electron has no picker of its own on Windows, so a small window lists the screens and
+// windows, as Teams' own app does. Only the picture goes: the computer's sound would bring the others' voices back to them.
+let shareWin: BrowserWindow | null = null;
+let shareSources: Electron.DesktopCapturerSource[] = [];
+let shareDone: ((streams: Electron.Streams | null) => void) | null = null;
+async function pickShare(request: Electron.DisplayMediaRequestHandlerHandlerRequest, callback: (streams: Electron.Streams | null) => void) {
+  if (shareWin || !request.videoRequested || !TEAMS_PAGE.test(`${request.securityOrigin}/`)) return callback(null); // one at a time, Teams only
+  shareSources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+  shareDone = callback;
+  const at = (callWin ?? teamsWin).getBounds(), width = 760, height = 560; // over the call
+  const win = shareWin = new BrowserWindow({ width, height, x: Math.round(at.x + (at.width - width) / 2), y: Math.round(at.y + (at.height - height) / 2),
+    show: false, title: t('share.title'), icon: APP_ICON, minimizable: false, alwaysOnTop: true, webPreferences: { preload } });
+  win.removeMenu();
+  win.loadFile(ui('share.html'));
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => { shareWin = null; shareSources = []; shareDone?.(null); shareDone = null; }); // closed without a choice: nothing shared
+}
+ipcMain.handle('share:sources', e => e.sender !== shareWin?.webContents ? [] // the thumbnails show the screen: only to the picker
+  : shareSources.map(s => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail.toDataURL() })));
+ipcMain.handle('share:pick', (e, id: unknown) => {
+  if (e.sender !== shareWin?.webContents) return;
+  const source = shareSources.find(s => s.id === id);
+  shareDone?.(source ? { video: source } : null);
+  shareDone = null;
+  shareWin.close();
+});
+
 // A reaction from Teams' full set, from a toast or an answer card: a small picker window like a menu.
 function showReactions(n: string) {
   if (!state.drafts[n]) return;
@@ -1347,11 +1376,12 @@ function webWindow(url: string) {
   void win.loadURL(url);
   return win;
 }
-ipcMain.handle('open:jira', (_e, key: string) => { // where the links of Teams open: here or in the browser
-  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(String(key))) return;
+ipcMain.handle('open:jira', (_e, key: string) => openJira(String(key)));
+function openJira(key: string) { // where the links of Teams open: here or in the browser
+  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return;
   const url = `${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`;
   if (settings.links === 'browser') void shell.openExternal(url); else webWindow(url);
-});
+}
 // A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
 // its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
 const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
@@ -1368,12 +1398,13 @@ async function jiraIssue(key: string) {
   jiraSeen.set(key, { at: Date.now(), issue });
   return issue;
 }
-// The same after the Jira links in Teams' chats. Not signed in: a hint, asked again in a minute (a click on the link opens
-// Jira in a window of the app, where the user signs in). ponytail: re-asked on the page's next change, not on the sign-in itself
+// The same after the Jira links and keys in Teams' chats; a click on a key opens it as a link would. Not signed in: a hint
+// after the links, asked again in a minute (a click on the link opens Jira in a window of the app, where the user signs in).
+// ponytail: re-asked on the page's next change, not on the sign-in itself
 const jiraLinks = () => teams.watchJira(settings.jiraUrl.replace(/\/+$/, ''), keys => {
-  for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000)
-    : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000)).catch(e => log('jira links:', errorText(e)));
-});
+  for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000, false)
+    : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000, !!i)).catch(e => log('jira links:', errorText(e)));
+}, key => openJira(key));
 // A GET to Jira as the user: with the saved token, when it was saved for this address and Jira still takes it; else with
 // the cookies of a sign-in in a window of the app. The token never follows a redirect: one fails the request.
 async function jiraGet(apiPath: string) {

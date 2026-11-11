@@ -123,6 +123,8 @@ async function typeLine(line: string) {
     for (const end = Date.now() + 6000; (await suggestionIndex(id)) < 0; await sleep(250))
       if (Date.now() > end) throw fail(500, `Teams emoji "${id}" not offered for :${code}, not sent`); // callers clear the box
     await click(SUGGESTION, await suggestionIndex(id)); // a click, never Enter: Enter without the list would send a half-typed message
+    // the list stays ~0.9 s after the click, and while it is there Teams drops an Enter: the message would not go
+    await waitFor(s => !document.querySelector(s), '#autocomplete-picker-list', 3000);
     await run(b => (document.querySelector(b) as HTMLElement | null)?.focus(), BOX);
   }
 }
@@ -248,55 +250,99 @@ export async function watchCall(onChange: (on: boolean) => void) {
     w.__tbCall.observe(document.body, { subtree: true, childList: true });
   }, [CALL, CALL_UI]);
 }
-// ---------- Jira: a ticket's status and name after its link in the chat's messages ----------
-// The page marks each link to <base>/browse/KEY in a message's text (not in link previews, not in the compose box) with
-// data-tb-jira; the app's style draws that text after the link, so Teams' own elements stay as they are. Keys with no text
-// yet, or an expired one, go to onKeys; jiraText brings the answer. base '' takes the marks away.
-const JIRA = 'tbJira';
-export async function watchJira(base: string, onKeys: (keys: string[]) => void) {
+// ---------- Jira: a ticket's status and name in the chat's messages ----------
+// In a message's text (not in link previews, not in the compose box):
+// - a link to <base>/browse/KEY gets data-tb-jira, which the app's style draws after the link;
+// - a bare key ("POS20-13443") Jira knows is underlined and opens in Jira on a click, and the text goes after the run of
+//   text it stands in, in an empty element of the app's own, also drawn by the style.
+// Teams draws its messages with React, which keeps its own text nodes: they are never cut or changed. The underline is a
+// CSS highlight (no element), the click is caught on the document, the app's elements are only added next to Teams' own;
+// and since a style draws all the texts, the messages' text as read (innerText: the app's own reading) stays as it was.
+// Keys with no text yet, or an expired one, go to onKeys, jiraText brings the answer; a click on a key goes to onOpen.
+// base '' takes it all away.
+const JIRA = 'tbJira', JIRA_OPEN = 'tbJiraOpen';
+export async function watchJira(base: string, onKeys: (keys: string[]) => void, onOpen: (key: string) => void) {
   await bind(JIRA, payload => onKeys(JSON.parse(payload)));
-  await run(([name, base]) => {
+  await bind(JIRA_OPEN, key => onOpen(key));
+  await run(([name, openName, base]) => {
     const w = window as any;
     w.__tbJira?.disconnect();
-    w.__tbJiraInfo = {}; // key → { text, until }
+    if (w.__tbJiraClick) document.removeEventListener('click', w.__tbJiraClick, true);
+    w.__tbJiraInfo = {}; // key → { text, until, found }
     w.__tbJiraAsked = new Set();
     for (const a of document.querySelectorAll('a[data-tb-jira]')) a.removeAttribute('data-tb-jira');
+    for (const s of document.querySelectorAll('span.tb-jira')) s.remove();
+    (CSS as any).highlights?.delete('tb-jira');
     if (!base) return;
     if (!document.getElementById('tb-jira')) {
       const s = document.createElement('style');
       s.id = 'tb-jira'; // inline-block: the link's underline stays off the text
-      s.textContent = 'a[data-tb-jira]::after{content:"· " attr(data-tb-jira);display:inline-block;margin-left:5px;color:var(--colorNeutralForeground3,#888);text-decoration:none}';
+      s.textContent = 'a[data-tb-jira]::after,span.tb-jira::after{content:"· " attr(data-tb-jira);display:inline-block;margin-left:5px;color:var(--colorNeutralForeground3,#888);text-decoration:none}'
+        + '::highlight(tb-jira){text-decoration:underline dotted;text-underline-offset:3px;color:var(--colorBrandForegroundLink,#5b5fc7)}';
       document.head.append(s);
     }
     const prefix = `${base.toLowerCase()}/browse/`;
+    const KEY = /\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g;
+    let keysAt = new WeakMap<Text, { start: number; end: number; key: string }[]>(); // the underlined keys, for a click
+    const ask = (key: string, want: string[]) => {
+      const info = w.__tbJiraInfo[key];
+      if ((!info || Date.now() > info.until) && !w.__tbJiraAsked.has(key)) { w.__tbJiraAsked.add(key); want.push(key); }
+      return info;
+    };
     const scan = () => {
-      const want: string[] = [];
-      for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-tid="chat-pane-message"] [id^="content-"] a[href]')) {
-        const key = a.href.toLowerCase().startsWith(prefix) && !a.isContentEditable
-          ? a.href.slice(prefix.length).match(/^([a-z][a-z0-9]{1,9}-\d{1,6})(?:[/?#]|$)/i)?.[1].toUpperCase() : undefined;
-        if (!key) continue;
-        const info = w.__tbJiraInfo[key];
-        if (info?.text && a.getAttribute('data-tb-jira') !== info.text) a.setAttribute('data-tb-jira', info.text);
-        if (info && !info.text) a.removeAttribute('data-tb-jira');
-        if ((!info || Date.now() > info.until) && !w.__tbJiraAsked.has(key)) { w.__tbJiraAsked.add(key); want.push(key); }
+      const want: string[] = [], ranges: Range[] = [], kept = new Set<Element>();
+      keysAt = new WeakMap();
+      for (const content of document.querySelectorAll('[data-tid="chat-pane-message"] [id^="content-"]')) {
+        for (const a of content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+          const key = a.href.toLowerCase().startsWith(prefix) && !a.isContentEditable ? a.href.slice(prefix.length).match(/^([a-z][a-z0-9]{1,9}-\d{1,6})(?:[/?#]|$)/i)?.[1].toUpperCase() : undefined;
+          const info = key && ask(key, want);
+          if (info?.text && a.getAttribute('data-tb-jira') !== info.text) a.setAttribute('data-tb-jira', info.text);
+          if (info && !info.text) a.removeAttribute('data-tb-jira');
+        }
+        const walk = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+        for (let node = walk.nextNode() as Text | null; node; node = walk.nextNode() as Text | null) {
+          if (!node.parentElement || node.parentElement.isContentEditable || node.parentElement.closest('a, code, pre')) continue; // an edited message: its editor's own
+          const text = node.nodeValue ?? '', found: { start: number; end: number; key: string }[] = [];
+          for (const m of text.matchAll(KEY)) if (ask(m[0], want)?.found) found.push({ start: m.index!, end: m.index! + m[0].length, key: m[0] });
+          if (!found.length) continue;
+          keysAt.set(node, found);
+          for (const f of found) { const r = new Range(); r.setStart(node, f.start); r.setEnd(node, f.end); ranges.push(r); }
+          // the key named again only where the text goes on after it, or there are several
+          const label = found.map(f => (found.length > 1 || /[\p{L}\p{N}]/u.test(text.slice(f.end)) ? `${f.key}: ` : '') + w.__tbJiraInfo[f.key].text).join('; ');
+          let note = node.nextSibling as Element | null;
+          if (!(note instanceof HTMLSpanElement && note.classList.contains('tb-jira'))) { note = Object.assign(document.createElement('span'), { className: 'tb-jira' }); node.after(note); }
+          if (note.getAttribute('data-tb-jira') !== label) note.setAttribute('data-tb-jira', label);
+          kept.add(note);
+        }
       }
+      for (const s of document.querySelectorAll('span.tb-jira')) if (!kept.has(s)) s.remove(); // its text changed or went
+      (CSS as any).highlights?.set('tb-jira', new (window as any).Highlight(...ranges));
       if (want.length) w[name]?.(JSON.stringify(want));
     };
     w.__tbJiraScan = scan;
+    w.__tbJiraClick = (e: MouseEvent) => { // a click on an underlined key, not the end of selecting text
+      const at = (document as any).caretPositionFromPoint?.(e.clientX, e.clientY);
+      const hit = at && keysAt.get(at.offsetNode)?.find(f => at.offset >= f.start && at.offset < f.end);
+      if (!hit || String(getSelection() ?? '')) return;
+      e.preventDefault(); e.stopPropagation();
+      w[openName]?.(hit.key);
+    };
+    document.addEventListener('click', w.__tbJiraClick, true);
     let timer = 0;
     w.__tbJira = new MutationObserver(() => { if (!timer) timer = window.setTimeout(() => { timer = 0; scan(); }, 500); });
     w.__tbJira.observe(document.body, { subtree: true, childList: true });
     scan();
-  }, [JIRA, base]);
+  }, [JIRA, JIRA_OPEN, base]);
 }
-// The text after a ticket's links ('' for none), and for how long it holds before the page asks again.
-export const jiraText = (key: string, text: string, ttl: number) => run(([key, text, ttl]) => {
+// The text after a ticket's links and keys ('' for none), for how long it holds before the page asks again, and whether
+// Jira knows the ticket: only then a bare key is marked (UTF-8 or ISO-8601 look like keys too).
+export const jiraText = (key: string, text: string, ttl: number, found: boolean) => run(([key, text, ttl, found]) => {
   const w = window as any;
   if (!w.__tbJiraInfo) return;
-  w.__tbJiraInfo[key] = { text, until: Date.now() + ttl };
+  w.__tbJiraInfo[key] = { text, until: Date.now() + ttl, found };
   w.__tbJiraAsked.delete(key);
   w.__tbJiraScan?.();
-}, [key, text, ttl]);
+}, [key, text, ttl, found]);
 // Chromium's "memory is short" pass and a full garbage collection: the page drops what it can rebuild.
 export const trimMemory = () => cdp('Memory.simulatePressureNotification', { level: 'critical' }).then(() => cdp('HeapProfiler.collectGarbage'));
 
