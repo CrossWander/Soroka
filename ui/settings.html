@@ -5,186 +5,188 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title data-i18n="set.title">Soroka</title>
 <style>
-  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e3de; --accent: #5b5fc7; --ok: #107c10; --warn: #c4314b; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3a3a38; --accent: #8f95ff; --ok: #6ccb5f; --warn: #ff8a9e; } }
-  body { margin: 0; overflow-y: auto; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
-  main { padding: 14px 18px 12px; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  h1 { font-size: 18px; font-weight: 600; margin: 0; }
-  #close { border: 0; font-size: 15px; padding: 2px 8px; color: var(--muted); }
-  #close:hover { color: var(--fg); background: var(--line); }
+  :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e3de; --accent: #5b5fc7; --ok: #107c10; --warn: #c4314b;
+    --hover: rgba(0,0,0,.05); --sel: rgba(91,95,199,.10); --knob: #fff; --off: #8a8a85; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3a3a38; --accent: #8f95ff; --ok: #6ccb5f; --warn: #ff8a9e;
+    --hover: rgba(255,255,255,.07); --sel: rgba(143,149,255,.14); --knob: #1f1f1e; --off: #8f8f8a; } }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  /* as Teams' and Windows 11's own settings: the sections on the left, one of them on the right */
+  .shell { height: 100%; display: flex; }
+  nav { width: 220px; flex: none; box-sizing: border-box; padding: 14px 8px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  nav h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px 10px; }
+  nav button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; position: relative; }
+  nav button:hover { background: var(--hover); }
+  nav button[aria-current="true"] { background: var(--sel); font-weight: 600; }
+  nav button[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
+  .pane { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
+  .inner { width: 100%; max-width: 700px; box-sizing: border-box; padding: 16px 22px 12px; flex: 1; }
+  header { display: flex; align-items: center; margin-bottom: 10px; }
+  h2 { font-size: 20px; font-weight: 600; margin: 0; }
+  #close { margin-left: auto; border: 0; font-size: 15px; padding: 2px 8px; color: var(--muted); background: transparent; }
+  #close:hover { color: var(--fg); background: var(--hover); }
   .welcome { border-left: 3px solid var(--accent); padding: 2px 10px; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-  /* four columns balanced by height; on a narrow screen they wrap to two rows and the window scrolls */
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; align-items: start; }
-  .block { break-inside: avoid; padding-bottom: 14px; }
-  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px 2px; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; }
-  .row { display: flex; align-items: center; gap: 10px; min-height: 38px; }
-  .row + .row, .row + .note + .row { border-top: 1px solid var(--line); }
-  .name { width: 92px; flex: none; color: var(--muted); }
-  #teamsState, #diagState, #aiRows .grow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* a narrow column cuts the version, not the dot from its word */
-  #aiRows > .row, #aiRows + .row { border-top: 1px solid var(--line); }
-  #aiOthers { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 6px 0; }
-  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .grow { flex: 1; min-width: 0; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
-  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
-  .note { color: var(--muted); font-size: 12px; padding: 0 0 8px 102px; margin-top: -6px; }
-  .note.full { padding-left: 0; margin-top: 0; }
-  #modelsNote { padding: 6px 0; }
-  textarea.tones { height: 52px; margin-top: 0; }
+  .intro { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  /* a row: the name and one line of explanation on the left, the control on the right */
+  .group { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  .group > * + *, #aiRows > * { border-top: 1px solid var(--line); }
+  .group > #aiRows { border-top: 0; }
+  .row { display: flex; align-items: center; gap: 16px; padding: 9px 14px; min-height: 42px; box-sizing: border-box; }
+  .text, .row > .name { flex: 1; min-width: 0; }
+  .text > span { display: block; }
+  .note { color: var(--muted); font-size: 12px; }
+  .group > .note { padding: 8px 14px; } /* under the rows: the AIs found, the self-check */
   .note:empty { display: none; }
-  select, button, textarea { font: inherit; color: var(--fg); }
-  select, input:not([type="checkbox"]) { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); min-width: 0; } /* a long option shrinks, never spills past the card */
-  input { font: inherit; color: var(--fg); }
-  button { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; cursor: pointer; white-space: nowrap; }
+  .ctl { flex: none; display: flex; align-items: center; gap: 8px; max-width: 60%; min-width: 0; }
+  .ctl > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* a state: its title has it whole */
+  .row > .grow { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* an AI program's state */
+  .row.tall { flex-wrap: wrap; }
+  .row.tall .ctl { max-width: none; flex-basis: 100%; flex-wrap: wrap; justify-content: flex-end; }
+  #aiOthers { display: flex; flex-wrap: wrap; gap: 2px 10px; justify-content: flex-end; white-space: normal; }
+  select, button, textarea, input { font: inherit; color: var(--fg); }
+  select, input:not([type="checkbox"]), textarea { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-width: 0; max-width: 100%; }
+  input.wide { width: 260px; }
+  textarea { width: 100%; box-sizing: border-box; height: 84px; resize: vertical; }
+  textarea[name="quickReplies"] { height: 112px; } /* all five phrases in sight */
+  button { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { background: var(--hover); }
   button:disabled { opacity: .5; cursor: default; }
   .link { border: 0; padding: 0; color: var(--accent); background: none; }
-  textarea { width: 100%; box-sizing: border-box; height: 84px; resize: none; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); margin: 10px 0 4px; }
-  .between { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 8px; font-size: 12px; color: var(--muted); }
+  .link:hover:not(:disabled) { background: none; text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* the switch of Teams and Windows 11 for an on/off setting */
+  input[type="checkbox"] { appearance: none; width: 40px; height: 20px; flex: none; margin: 0; border-radius: 10px; border: 1px solid var(--off); position: relative; cursor: pointer; }
+  input[type="checkbox"]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--off); transition: left .12s; }
+  input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type="checkbox"]:checked::after { left: 23px; background: var(--knob); }
   label.row { cursor: pointer; }
-  kbd { font: 12px "Segoe UI", system-ui; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
-  footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; padding: 0 2px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  kbd { font: 12px "Segoe UI", system-ui; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); }
+  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; padding: 8px 22px 14px; max-width: 700px; box-sizing: border-box; }
   [hidden] { display: none !important; }
-  .note.top { padding-top: 8px; }
   .spin { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } input[type="checkbox"]::after { transition: none; } }
+  /* a narrow window: the sections above, the controls under their names */
+  @media (max-width: 640px) {
+    .shell { flex-direction: column; }
+    nav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+    nav h1 { display: none; }
+    nav button[aria-current="true"]::before { display: none; }
+    .row { flex-wrap: wrap; }
+    .ctl { max-width: none; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <header><h1 data-i18n="set.title"></h1><button id="close" data-i18n-title="toast.close">✕</button></header>
-  <div class="welcome" id="welcome" data-i18n="set.welcome" hidden></div>
-  <div class="grid">
-    <div class="col">
-      <div class="block">
-        <h2 data-i18n="set.connections"></h2>
-        <section>
-          <div class="row"><span class="name">Teams</span><span class="grow" id="teamsState"><span class="dot"></span>…</span><button id="teamsShow" data-i18n="set.open"></button></div>
-          <div class="row"><span class="name" data-i18n="set.diag"></span><span class="grow" id="diagState"><span class="dot"></span>…</span><button id="diagCheck" data-i18n="set.check"></button></div>
-          <div class="note" id="diagNote"></div>
-          <label class="row"><input type="checkbox" name="aiOff"> <span data-i18n="set.aiOff"></span></label>
-          <div class="note full" data-ai-off data-i18n="set.aiOffNote"></div>
-          <div id="aiRows" data-ai-on></div>
-          <div class="row" data-ai-on><span class="name" data-i18n="set.aiOthers"></span><span class="grow" id="aiOthers"></span></div>
-          <div class="note" id="aiNote" data-ai-on></div>
-          <div class="row" data-ai-on><span class="name" data-i18n="set.models"></span><span class="grow" id="modelsNote"></span><button id="modelsCheck" data-i18n="set.modelsCheck"></button></div>
-          <div class="note" data-ai data-i18n="set.modelsNote"></div>
-          <div class="row" data-ai-on><span class="name" data-i18n="set.webChat"></span>
-            <select class="grow" name="webChat"><option value="" data-i18n="set.webAuto"></option><option value="claude">Claude</option><option value="chatgpt">ChatGPT</option>
-              <option value="gemini">Gemini</option><option value="m365">Microsoft 365 Copilot</option><option value="github">GitHub Copilot</option></select></div>
-          <div class="note" data-ai-on data-i18n="set.webNote"></div>
-        </section>
-      </div>
-    </div>
+<div class="shell">
+  <nav id="nav"><h1 data-i18n="set.nav"></h1></nav>
+  <div class="pane" id="pane">
+    <div class="inner">
+      <header><h2 id="secTitle"></h2><button id="close" data-i18n-title="toast.close">✕</button></header>
+      <section data-sec="general" data-name="set.sec.general">
+        <div class="welcome" id="welcome" data-i18n="set.welcome" hidden></div>
+        <div class="group">
+          <div class="row"><span class="text" data-i18n="set.language"></span>
+            <span class="ctl"><select name="language"><option value="uk">Українська</option><option value="en">English</option><option value="ru">Русский</option></select></span></div>
+          <div class="row"><span class="text"><span data-i18n="set.theme"></span><span class="note" data-i18n="set.themeNote"></span></span>
+            <span class="ctl"><select name="theme"><option value="" data-i18n="set.themeSystem"></option><option value="light" data-i18n="set.themeLight"></option><option value="dark" data-i18n="set.themeDark"></option></select></span></div>
+          <label class="row"><span class="text" data-i18n="set.autostart"></span><input type="checkbox" name="autostart"></label>
+          <div class="row"><span class="text"><span data-i18n="set.links"></span><span class="note" data-i18n="set.linksNote"></span></span>
+            <span class="ctl"><select name="links"><option value="" data-i18n="set.linksApp"></option><option value="browser" data-i18n="set.linksBrowser"></option></select></span></div>
+          <div class="row"><span class="text" data-i18n="set.jira"></span><span class="ctl"><input class="wide" name="jiraUrl" data-i18n-placeholder="set.jiraPh"></span></div>
+          <div class="row"><span class="text" data-i18n="set.notify"></span><span class="ctl"><button id="notifyTest" data-i18n="set.notifyTest"></button></span></div>
+        </div>
+      </section>
 
-    <div class="col">
-      <div class="block">
-        <h2 data-i18n="set.newMessages"></h2>
-        <section>
-          <div class="note full top" data-i18n="set.notifyNote"></div>
-          <div class="row"><span class="name" data-i18n="set.onlyFrom"></span><input class="grow" name="onlyFrom" maxlength="1000" data-i18n-placeholder="set.onlyFromPh"></div>
-          <div class="row"><span class="name" data-i18n="set.keywords"></span><input class="grow" name="keywords" maxlength="1000" data-i18n-placeholder="set.keywordsPh"></div>
-          <div class="row"><span class="name" data-i18n="set.quiet"></span><input type="time" name="quietFrom"> – <input type="time" name="quietTo"></div>
-          <div class="note" data-i18n="set.quietNote"></div>
-          <label class="row"><input type="checkbox" name="quietDnd"> <span data-i18n="set.quietDnd"></span></label>
-          <label class="row"><input type="checkbox" name="activity"> <span data-i18n="set.activity"></span></label>
-          <div class="row"><span class="name" data-i18n="set.muteFrom"></span><input class="grow" name="muteFrom" maxlength="1000" data-i18n-placeholder="set.muteFromPh"></div>
-          <div class="row"><span class="name" data-i18n="set.remind"></span>
-            <select name="remindAfter"><option value="" data-i18n="set.remindNever"></option><option value="60" data-i18n="set.remind60"></option>
-              <option value="240" data-i18n="set.remind240"></option><option value="1440" data-i18n="set.remind1440"></option></select></div>
-          <div class="note" data-i18n="set.remindNote"></div>
-          <div class="row"><span class="name" data-i18n="set.followUp"></span>
-            <select name="followUpAfter"><option value="" data-i18n="set.remindNever"></option><option value="60" data-i18n="set.remind60"></option>
-              <option value="240" data-i18n="set.remind240"></option><option value="1440" data-i18n="set.remind1440"></option></select></div>
-          <div class="note" data-i18n="set.followUpNote"></div>
-        </section>
-      </div>
+      <section data-sec="notify" data-name="set.sec.notify">
+        <p class="intro" data-i18n="set.notifyNote"></p>
+        <div class="group">
+          <div class="row"><span class="text" data-i18n="set.onlyFrom"></span><span class="ctl"><input class="wide" name="onlyFrom" maxlength="1000" data-i18n-placeholder="set.onlyFromPh"></span></div>
+          <div class="row"><span class="text" data-i18n="set.keywords"></span><span class="ctl"><input class="wide" name="keywords" maxlength="1000" data-i18n-placeholder="set.keywordsPh"></span></div>
+          <div class="row"><span class="text" data-i18n="set.muteFrom"></span><span class="ctl"><input class="wide" name="muteFrom" maxlength="1000" data-i18n-placeholder="set.muteFromPh"></span></div>
+          <div class="row"><span class="text"><span data-i18n="set.quiet"></span><span class="note" data-i18n="set.quietNote"></span></span>
+            <span class="ctl"><input type="time" name="quietFrom"> – <input type="time" name="quietTo"></span></div>
+          <label class="row"><span class="text" data-i18n="set.quietDnd"></span><input type="checkbox" name="quietDnd"></label>
+          <label class="row"><span class="text" data-i18n="set.activity"></span><input type="checkbox" name="activity"></label>
+          <label class="row" data-ai><span class="text"><span data-i18n="set.triage"></span><span class="note" data-i18n="set.triageShort" data-i18n-title="set.triageNote"></span></span>
+            <input type="checkbox" name="triage"></label>
+        </div>
+      </section>
 
-      <div class="block">
-        <h2 data-i18n="set.inTeams"></h2>
-        <section>
-          <div class="row"><span class="grow" data-i18n="set.keySummary"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></div>
-          <div class="row" data-ai><span class="grow" data-i18n="set.keyReply"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
-          <div class="row" data-ai><span class="grow" data-i18n="set.keyImprove"></span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></div>
-          <div class="note full" data-i18n="set.keysNote"></div>
-        </section>
-      </div>
-    </div>
+      <section data-sec="remind" data-name="set.sec.remind">
+        <div class="group">
+          <div class="row"><span class="text"><span data-i18n="set.remindPersonal"></span><span class="note" data-i18n="set.remindNote"></span></span>
+            <span class="ctl"><select name="remindAfter"><option value="" data-i18n="set.remindNever"></option><option value="60" data-i18n="set.remind60"></option>
+              <option value="240" data-i18n="set.remind240"></option><option value="1440" data-i18n="set.remind1440"></option></select></span></div>
+          <div class="row"><span class="text"><span data-i18n="set.followUp"></span><span class="note" data-i18n="set.followUpShort" data-i18n-title="set.followUpNote"></span></span>
+            <span class="ctl"><select name="followUpAfter"><option value="" data-i18n="set.remindNever"></option><option value="60" data-i18n="set.remind60"></option>
+              <option value="240" data-i18n="set.remind240"></option><option value="1440" data-i18n="set.remind1440"></option></select></span></div>
+        </div>
+      </section>
 
-    <div class="col">
-      <div class="block">
-        <h2 data-i18n="set.app"></h2>
-        <section>
-          <div class="row"><span class="name" data-i18n="set.language"></span>
-            <select name="language"><option value="uk">Українська</option><option value="en">English</option><option value="ru">Русский</option></select></div>
-          <div class="row"><span class="name" data-i18n="set.theme"></span>
-            <select name="theme"><option value="" data-i18n="set.themeSystem"></option><option value="light" data-i18n="set.themeLight"></option><option value="dark" data-i18n="set.themeDark"></option></select></div>
-          <div class="note" data-i18n="set.themeNote"></div>
-          <label class="row"><input type="checkbox" name="autostart"> <span data-i18n="set.autostart"></span></label>
-          <div class="row"><span class="name" data-i18n="set.links"></span>
-            <select class="grow" name="links"><option value="" data-i18n="set.linksApp"></option><option value="browser" data-i18n="set.linksBrowser"></option></select></div>
-          <div class="note" data-i18n="set.linksNote"></div>
-          <div class="row"><span class="name" data-i18n="set.notify"></span><span class="grow"></span><button id="notifyTest" data-i18n="set.notifyTest"></button></div>
-          <div class="row"><span class="name" data-i18n="set.jira"></span><input class="grow" name="jiraUrl" data-i18n-placeholder="set.jiraPh"></div>
-        </section>
-      </div>
-
-      <div class="block" data-ai>
-        <h2 data-i18n="set.claudeMessages"></h2>
-        <section>
-          <div class="row"><span class="name" data-i18n="set.action"></span>
-            <select class="grow" name="wakeMode">
+      <section data-sec="replies" data-name="set.sec.replies">
+        <div class="group">
+          <div class="row tall"><span class="text"><span data-i18n="set.quick"></span><span class="note" data-i18n="set.quickShort" data-i18n-title="set.quickNote"></span></span>
+            <span class="ctl"><textarea name="quickReplies" maxlength="500" data-i18n-placeholder="quick.default"></textarea></span></div>
+          <div class="row" data-ai><span class="text"><span data-i18n="set.action"></span><span class="note" id="modeNote"></span></span>
+            <span class="ctl"><select name="wakeMode">
               <option value="notify" data-i18n="set.wake.notify"></option>
               <option value="drafts" data-i18n="set.wake.drafts"></option>
               <option value="monitor" data-i18n="set.wake.monitor"></option>
-            </select></div>
-          <div class="note" id="modeNote"></div>
-          <label class="row"><input type="checkbox" name="triage"> <span data-i18n="set.triage"></span></label>
-          <div class="note" data-i18n="set.triageNote"></div>
-          <div class="row"><span class="name" data-i18n="set.model"></span>
-            <select name="draftModel"></select></div>
-          <div class="row"><span class="name" data-i18n="set.aiSkip"></span><input class="grow" name="aiSkip" maxlength="1000" data-i18n-placeholder="set.aiSkipPh"></div>
-          <div class="note" data-i18n="set.aiSkipNote"></div>
-        </section>
-      </div>
+            </select></span></div>
+          <div class="row" data-ai><span class="text" data-i18n="set.model"></span><span class="ctl"><select name="draftModel"></select></span></div>
+          <div class="row tall" data-ai><span class="text"><span data-i18n="set.styleNote"></span><span class="note" id="styleNote"></span></span>
+            <span class="ctl"><textarea id="style" maxlength="3000" data-i18n-placeholder="set.stylePlaceholder"></textarea><button class="link" id="styleLearn" data-i18n="set.styleLearn"></button></span></div>
+          <div class="row tall" data-ai><span class="text"><span data-i18n="set.tones"></span><span class="note" data-i18n="set.tonesNote"></span></span>
+            <span class="ctl"><textarea name="tones" maxlength="3000" data-i18n-placeholder="set.tonesPh"></textarea></span></div>
+          <label class="row" data-ai><span class="text" data-i18n="set.label"></span><input type="checkbox" name="label"></label>
+        </div>
+      </section>
+
+      <section data-sec="summary" data-name="set.sec.summary">
+        <div class="group">
+          <div class="row"><span class="text"><span data-i18n="set.digest"></span><span class="note" data-i18n="set.digestNote"></span></span>
+            <span class="ctl"><input type="time" name="digestAt"></span></div>
+          <label class="row"><span class="text" data-i18n="set.summaryBackground"></span><input type="checkbox" name="summaryBackground"></label>
+          <div class="row" data-ai><span class="text" data-i18n="set.model"></span><span class="ctl"><select name="summaryModel"></select></span></div>
+        </div>
+      </section>
+
+      <section data-sec="ai" data-name="set.sec.ai">
+        <div class="group">
+          <label class="row"><span class="text"><span data-i18n="set.aiOff"></span><span class="note" data-ai-off data-i18n="set.aiOffNote"></span></span>
+            <input type="checkbox" name="aiOff"></label>
+          <div id="aiRows" data-ai-on></div>
+          <div class="row" data-ai-on><span class="text" data-i18n="set.aiOthers"></span><span class="ctl"><span id="aiOthers"></span></span></div>
+          <div class="note" id="aiNote" data-ai-on></div>
+          <div class="row" data-ai-on><span class="text"><span data-i18n="set.models"></span><span class="note" data-i18n="set.modelsShort" data-i18n-title="set.modelsNote"></span></span>
+            <span class="ctl"><span id="modelsNote"></span><button id="modelsCheck" data-i18n="set.modelsCheck"></button></span></div>
+          <div class="row" data-ai-on><span class="text"><span data-i18n="set.webChat"></span><span class="note" data-i18n="set.webNote"></span></span>
+            <span class="ctl"><select name="webChat"><option value="" data-i18n="set.webAuto"></option><option value="claude">Claude</option><option value="chatgpt">ChatGPT</option>
+              <option value="gemini">Gemini</option><option value="m365">Microsoft 365 Copilot</option><option value="github">GitHub Copilot</option></select></span></div>
+          <div class="row" data-ai><span class="text"><span data-i18n="set.aiSkip"></span><span class="note" data-i18n="set.aiSkipShort" data-i18n-title="set.aiSkipNote"></span></span>
+            <span class="ctl"><input class="wide" name="aiSkip" maxlength="1000" data-i18n-placeholder="set.aiSkipPh"></span></div>
+        </div>
+      </section>
+
+      <section data-sec="teams" data-name="set.sec.teams">
+        <div class="group">
+          <div class="row"><span class="text">Teams</span><span class="ctl"><span id="teamsState"><span class="dot"></span>…</span><button id="teamsShow" data-i18n="set.open"></button></span></div>
+          <div class="row"><span class="text" data-i18n="set.diag"></span><span class="ctl"><span id="diagState"><span class="dot"></span>…</span><button id="diagCheck" data-i18n="set.check"></button></span></div>
+          <div class="note" id="diagNote"></div>
+          <div class="row"><span class="text" data-i18n="set.keySummary"></span><span class="ctl"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></span></div>
+          <div class="row" data-ai><span class="text" data-i18n="set.keyReply"></span><span class="ctl"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></span></div>
+          <div class="row" data-ai><span class="text" data-i18n="set.keyImprove"></span><span class="ctl"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></span></div>
+          <div class="row"><span class="text" data-i18n="set.keyRefresh"></span><span class="ctl"><kbd>F5</kbd></span></div>
+          <div class="note" data-i18n="set.keysNote"></div>
+        </div>
+      </section>
     </div>
-
-    <div class="col">
-      <div class="block">
-        <h2 data-i18n="set.summary"></h2>
-        <section>
-          <div class="row" data-ai><span class="name" data-i18n="set.model"></span>
-            <select name="summaryModel"></select></div>
-          <div class="row"><span class="name" data-i18n="set.digest"></span><input type="time" name="digestAt"></div>
-          <div class="note" data-i18n="set.digestNote"></div>
-          <label class="row"><input type="checkbox" name="summaryBackground"> <span data-i18n="set.summaryBackground"></span></label>
-        </section>
-      </div>
-
-      <div class="block">
-        <h2 data-i18n="set.quick"></h2>
-        <section>
-          <textarea name="quickReplies" class="tones" maxlength="500" data-i18n-placeholder="quick.default"></textarea>
-          <div class="between"><span data-i18n="set.quickNote"></span></div>
-        </section>
-      </div>
-
-      <div class="block" data-ai>
-        <h2 data-i18n="set.onBehalf"></h2>
-        <section>
-          <textarea id="style" maxlength="3000" data-i18n-placeholder="set.stylePlaceholder"></textarea>
-          <div class="between"><span id="styleNote" data-i18n="set.styleNote"></span><button class="link" id="styleLearn" data-i18n="set.styleLearn"></button></div>
-          <textarea name="tones" class="tones" maxlength="3000" data-i18n-placeholder="set.tonesPh"></textarea>
-          <div class="between"><span data-i18n="set.tonesNote"></span></div>
-          <label class="row"><input type="checkbox" name="label"> <span data-i18n="set.label"></span></label>
-        </section>
-      </div>
-    </div>
+    <footer><span><span id="about">Soroka · created by Pavlo Dykalo</span> · <button class="link" id="diagCopy" data-i18n="set.diagCopy"></button></span><span id="status" data-i18n="set.footer"></span></footer>
   </div>
-  <footer><span><span id="about">Soroka · created by Pavlo Dykalo</span> · <button class="link" id="diagCopy" data-i18n="set.diagCopy"></button></span><span id="status" data-i18n="set.footer"></span></footer>
-</main>
+</div>
 <script src="i18n.js"></script>
 <script type="module">
   await i18n;
@@ -298,6 +300,21 @@
     catch (e) { $('styleNote').textContent = errorText(e); }
     finally { $('styleLearn').disabled = false; }
   };
+
+  // The sections: listed on the left, one of them on screen
+  const sections = [...document.querySelectorAll('section[data-sec]')];
+  function open(id) {
+    for (const s of sections) s.hidden = s.dataset.sec !== id;
+    for (const b of $('nav').querySelectorAll('button')) b.setAttribute('aria-current', String(b.dataset.sec === id));
+    $('secTitle').textContent = t(sections.find(s => s.dataset.sec === id).dataset.name);
+    $('pane').scrollTop = 0;
+  }
+  for (const s of sections) {
+    const b = el('button', '', t(s.dataset.name));
+    b.dataset.sec = s.dataset.sec; b.onclick = () => open(s.dataset.sec);
+    $('nav').append(b);
+  }
+  open('general');
 </script>
 </body>
 </html>

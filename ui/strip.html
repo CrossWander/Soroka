@@ -36,7 +36,7 @@
   <span class="grow"></span>
   <span id="status"></span>
   <button id="drafts" class="icon" data-act="drafts" data-i18n-title="strip.draftsTip"></button>
-  <button class="icon" data-act="settings" data-i18n-title="strip.settingsTip">⚙</button>
+  <button id="settings" class="icon" data-act="settings" data-i18n-title="strip.settingsTip">⚙</button>
 </header>
 <script src="i18n.js"></script>
 <script type="module">
@@ -49,6 +49,7 @@
     document.body.classList.toggle('inactive', !s.active);
     $('menu').setAttribute('aria-expanded', String(s.menu));
     $('drafts').setAttribute('aria-pressed', String(s.panel)); // the panel is open
+    $('settings').setAttribute('aria-pressed', String(s.settings)); // the settings are open: ⚙ again closes them
     const badge = document.createElement('span');
     badge.className = 'badge'; badge.textContent = s.pending > 9 ? '9+' : s.pending;
     $('drafts').replaceChildren('▤', ...(s.pending ? [badge] : []));

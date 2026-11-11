@@ -233,7 +233,7 @@ let chatInView = '';
 let menuView: WebContentsView | null = null, menuX = 0, menuClosedAt = 0; // "Soroka ▾", below
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
 const stripState = () => ({ chat: chatInView, pending: pending().length, ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
-  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab });
+  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab, settings: !!settingsView });
 const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); };
 async function working<T>(what: string, fn: () => Promise<T>) {
   activity.push(what); pushStrip();
@@ -245,7 +245,7 @@ const ACTIONS: Record<string, () => void> = {
   improve: () => (aiReady() ? void improveHere() : explainAi()),
   drafts: () => (panelTab ? closePanel() : showDrafts()), // ▤ in the title bar
   refresh: () => void serial(() => connect(false)),
-  settings: () => showSettings(),
+  settings: () => (settingsView ? closeSettings() : showSettings()), // ⚙ in the title bar, like ▤
 };
 const HOTKEYS: Record<string, string> = { 'Ctrl+Shift+KeyS': 'summary', 'Ctrl+Shift+KeyR': 'suggest', 'Ctrl+Shift+KeyI': 'improve', F5: 'refresh' }; // Ctrl+Shift+E is Teams' screen sharing
 // by physical key (code), so the hotkeys work in any keyboard layout
@@ -401,15 +401,19 @@ function newTeamsPage() {
   });
   // Microsoft's sign-in, and links (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so
   // Microsoft 365 opens signed in. Only web pages: other schemes would start programs.
-  // "Links: in the browser" sends the pages to the default browser; Microsoft's sign-in stays here, Teams needs it.
+  // "Links: in the browser" sends the pages to the default browser; Microsoft's sign-in stays here, Teams needs it, and so
+  // do the apps of Teams' Office menu (the dotted grid), whose addresses carry the account: login_hint.
   page.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow' };
     if (!/^https?:\/\//.test(url)) return { action: 'deny' };
-    if (settings.links === 'browser') { void shell.openExternal(url); return { action: 'deny' }; }
+    if (settings.links === 'browser' && !/[?&]login_hint=/.test(url)) { void shell.openExternal(url); return { action: 'deny' }; }
     return { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true } };
   });
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
+  // Teams marks its header as a window drag area (app-region), for its own desktop app. In this frameless window Windows
+  // took a click there for the start of a drag: the app launcher and the search box got none. The window drags by the strip.
+  page.on('dom-ready', () => void page.insertCSS('*{app-region:no-drag!important}', { cssOrigin: 'user' }));
   teams.attach(page);
 }
 // Teams reports a change of the unread chats: look at once instead of waiting for the timer
@@ -597,6 +601,7 @@ function showSettings(welcome = false) {
   settingsView.setBounds(below(STRIP));
   teamsWin.contentView.addChildView(settingsView);
   settingsView.webContents.focus();
+  pushStrip(); // ⚙ shows pressed
 }
 function closeSettings() {
   const view = settingsView;
@@ -604,6 +609,7 @@ function closeSettings() {
   settingsView = null;
   teamsWin.contentView.removeChildView(view);
   teamsPage.focus();
+  pushStrip();
   // a text field saves when it loses focus: let the one being typed in save, then close the page
   void view.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {}).finally(() => view.webContents.close());
 }
