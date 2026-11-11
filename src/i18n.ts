@@ -354,6 +354,8 @@ const S: Record<string, [string, string, string]> = {
   'set.diagNote': ['Teams оновився, і може не працювати: {list}. Надішліть автору звіт (посилання внизу; без змісту чатів).', 'Teams has updated, and this may not work: {list}. Send the author the report (link at the bottom; no chat contents).', 'Teams обновился, и может не работать: {list}. Отправьте автору отчёт (ссылка внизу; без содержимого чатов).'],
   'set.diagCopy': ['звіт для автора', 'report for the author', 'отчёт для автора'],
   'set.diagCopied': ['Звіт скопійовано — без змісту чатів, можна надіслати автору', 'Report copied — no chat contents, ready to send to the author', 'Отчёт скопирован — без содержимого чатов, можно отправить автору'],
+  'err.aiTimeout': ['немає відповіді за {s} с', 'no answer in {s} s', 'нет ответа за {s} с'],
+  'err.aiAuto': ['Самостійно ШІ працює лише без інструментів (Claude Code, Codex або Ollama); інші — тільки за вашою кнопкою', 'On its own the app uses only an AI without tools (Claude Code, Codex or Ollama); the others answer on your click only', 'Самостоятельно ИИ работает только без инструментов (Claude Code, Codex или Ollama); остальные — только по вашей кнопке'],
   'diag.rail': ['з’єднання з Teams', 'Teams connection', 'соединение с Teams'],
   'diag.chat': ['перехід до чатів', 'switching to chats', 'переход к чатам'],
   'diag.activity': ['згадки в каналах', 'channel mentions', 'упоминания в каналах'],

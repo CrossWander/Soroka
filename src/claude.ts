@@ -1,5 +1,5 @@
 // Claude Code found on this computer: no API keys, every call counts against the plan of whoever signed in to Claude Code.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,15 +29,35 @@ export const find = () =>candidates().find(p => { try { return fs.statSync(p).is
 const API_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !API_VARS.includes(k.toUpperCase())));
 
-// npm installs a .cmd wrapper, which Node can start only through cmd.exe: then every argument needs quotes.
-function exec(exe: string, args: string[], input: string | undefined, timeout: number, signal?: AbortSignal) {
-  const shell = exe.endsWith('.cmd');
-  const argv = shell ? args.map(a => `"${a}"`) : args;
-  return new Promise<string>((ok, no) => {
-    const p = execFile(shell ? `"${exe}"` : exe, argv, { timeout, maxBuffer: 1 << 21, windowsHide: true, shell, env, signal },
-      (err, out, errOut) => (err ? no(Object.assign(err, { output: `${out}\n${errOut}`, stdout: out })) : ok(out.trim())));
-    p.stdin?.end(input ?? '');
+// One run of a program, its output as text; a failure carries what it printed (output, stdout). Past its time or stopped,
+// its whole process tree goes: a .cmd runs under cmd.exe, and killing cmd.exe alone left the program itself running.
+type ExecOptions = { input?: string; timeout: number; signal?: AbortSignal; cwd?: string; shell?: boolean; maxBuffer?: number; env: NodeJS.ProcessEnv };
+export function execText(file: string, args: string[], o: ExecOptions) {
+  return new Promise<{ out: string; errOut: string }>((ok, no) => {
+    let why = '';
+    const p = execFile(file, args, { cwd: o.cwd ?? os.tmpdir(), maxBuffer: o.maxBuffer ?? 1 << 23, windowsHide: true, shell: o.shell, env: o.env }, (err, out, errOut) => {
+      clearTimeout(timer); o.signal?.removeEventListener('abort', abort);
+      if (why) return no(Object.assign(new Error(why), { output: why, stdout: '' })); // cut short: half an answer is no answer
+      if (err) return no(Object.assign(err, { output: `${out}\n${errOut}`, stdout: out }));
+      ok({ out, errOut });
+    });
+    const stop = (reason: string) => {
+      if (why) return;
+      why = reason;
+      if (process.platform === 'win32' && p.pid) spawn('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => p.kill());
+      else p.kill();
+    };
+    const timer = setTimeout(() => stop(t('err.aiTimeout', { s: Math.round(o.timeout / 1000) })), o.timeout);
+    const abort = () => stop(t('err.stopped'));
+    if (o.signal?.aborted) abort(); else o.signal?.addEventListener('abort', abort, { once: true });
+    p.stdin?.on('error', () => {}); // a program that exits before reading its input
+    p.stdin?.end(o.input ?? '');
   });
+}
+// npm installs a .cmd wrapper, which Node can start only through cmd.exe: then every argument needs quotes.
+function exec(exe: string, args: string[], input: string | undefined, timeout: number, signal?: AbortSignal, cwd?: string) {
+  const shell = exe.endsWith('.cmd');
+  return execText(shell ? `"${exe}"` : exe, shell ? args.map(a => `"${a}"`) : args, { input, timeout, signal, cwd, shell, env, maxBuffer: 1 << 21 }).then(r => r.out.trim());
 }
 
 export async function info(): Promise<ClaudeInfo> {
@@ -62,7 +82,7 @@ export async function ask(system: string, prompt: string, model: string, dataDir
   fs.writeFileSync(systemFile, system);
   try {
     const out = await exec(exe, ['-p', '--model', model, '--tools', '', '--system-prompt-file', systemFile, '--no-session-persistence',
-      '--strict-mcp-config', '--setting-sources', '', '--output-format', 'json'], prompt, 180_000, signal)
+      '--strict-mcp-config', '--setting-sources', '', '--output-format', 'json'], prompt, 180_000, signal, dataDir) // in the app's empty folder, never the user's projects
       .catch(e => { const json = (e as { stdout?: string }).stdout?.trim(); if (json && /^[[{]/.test(json) && !signal?.aborted) return json; throw e; }); // an error answer exits with 1
     const r: Result = [JSON.parse(out)].flat().at(-1) ?? {}; // a list of events in current versions, one object in older ones
     const u = r.usage ?? {};
@@ -77,6 +97,7 @@ export async function ask(system: string, prompt: string, model: string, dataDir
 // A failed run in a few words: sign-in, or the last line Claude Code printed
 function failure(e: unknown) {
   const out = (e as { output?: string }).output ?? '';
+  if (!(e as { stdout?: string }).stdout && out === (e as Error).message) return e as Error; // timed out or stopped: already in the user's words
   if (/log ?in|logged out|authenticat|\/login|expired/i.test(out)) return Object.assign(new Error(t('err.claudeLogin')), { claude: 'login' });
   return new Error(`Claude Code: ${out.trim().split('\n').pop() || (e as Error).message}`);
 }

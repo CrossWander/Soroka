@@ -1,7 +1,7 @@
 // The AI the app works through: the official programs of the user's own subscriptions, signed in to their account
 // (Claude Code, Codex for ChatGPT, Gemini, Copilot, Cursor), or Ollama on this computer. Never API keys.
 // A model id is "provider:model"; an empty model is the program's own default.
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,7 +37,11 @@ const API_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !API_VARS.includes(k.toUpperCase())));
 // An empty folder to run in: no project files or project instructions of the user's around the chats.
 let work = os.tmpdir();
-export const setup = (dir: string) => { work = path.join(dir, 'ai'); fs.mkdirSync(work, { recursive: true }); };
+export const setup = (dir: string) => {
+  work = path.join(dir, 'ai');
+  fs.mkdirSync(work, { recursive: true });
+  for (const f of fs.readdirSync(work)) if (/^prompt-.*\.txt$/.test(f)) fs.rmSync(path.join(work, f), { force: true }); // left by a run the app's exit cut short
+};
 
 // npm installs a .cmd that starts a script with node: run that script directly, so no argument passes through cmd.exe,
 // where chat text could break out of its quotes. Other .cmd files run through cmd.exe only with plain arguments.
@@ -52,12 +56,8 @@ function run(exe: string, args: string[], { input, timeout = 20_000, signal, bot
   const [file, pre] = direct(exe);
   const shell = /\.cmd$/i.test(file);
   if (shell && !args.every(a => /^[\w .:\\/=@,+-]*$/.test(a))) return Promise.reject(new Error(`${path.basename(exe)}: needs node.exe to run safely`));
-  return new Promise<string>((ok, no) => {
-    const p = execFile(shell ? `"${file}"` : file, [...pre, ...args].map(a => (shell ? `"${a}"` : a)),
-      { cwd: work, timeout, maxBuffer: 1 << 23, windowsHide: true, shell, env, signal },
-      (err, out, errOut) => (err ? no(Object.assign(err, { output: `${out}\n${errOut}`, stdout: out })) : ok((both ? `${out}\n${errOut}` : out).trim())));
-    p.stdin?.end(input ?? '');
-  });
+  return claude.execText(shell ? `"${file}"` : file, [...pre, ...args].map(a => (shell ? `"${a}"` : a)), { input, timeout, signal, cwd: work, shell, env })
+    .then(({ out, errOut }) => (both ? `${out}\n${errOut}` : out).trim());
 }
 // What a status command says, whatever its exit code ("Not logged in" exits with 1)
 const said = (exe: string, args: string[]) => run(exe, args, { both: true }).catch(e => ((e as { output?: string }).output ?? '').trim());
@@ -74,6 +74,14 @@ function asArg(name: string, text: string) {
 const both = (system: string, prompt: string) => `${system}\n\n${prompt}`; // for the programs without a separate system prompt
 const json = (out: string) => JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1));
 
+// ponytail: the feature names of Codex 0.162 (codex features list); an unknown name fails the run, a new tool feature stays on
+const CODEX_OFF = ['shell_tool', 'unified_exec', 'unified_exec_tty', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
+  'in_app_browser', 'apps', 'plugins', 'remote_plugin', 'image_generation', 'multi_agent', 'view_image', 'skill_search', 'sleep_tool', 'code_mode_host',
+  'tool_suggest', 'goals', 'collaboration_modes', 'hooks'];
+// No tools at all, so what a chat says cannot make them read files, run programs or open sites: only these answer on their own
+// (drafts mode, "AI sorts", the daily digest) and take over from another AI past its limit. The others run tools by their own
+// rules, with no switch that turns them all off, so they answer only when the user asks.
+export const SEALED = ['claude', 'codex', 'ollama'];
 const PROVIDERS: Provider[] = [
   { id: 'claude', name: 'Claude Code', install: 'https://claude.com/claude-code', web: 'claude', login: ['auth', 'login'],
     exe: claude.find,
@@ -91,14 +99,17 @@ const PROVIDERS: Provider[] = [
     // the catalog of this account; "hide" marks service models
     models: async exe => (json(await run(exe, ['debug', 'models'], { timeout: 60_000 })).models as { slug: string; visibility?: string }[])
       .filter(m => m.visibility !== 'hide').map(m => m.slug),
-    // read-only sandbox, no user config (its MCP servers and rules), nothing saved; the request comes on stdin
+    // read-only sandbox, no user config (its MCP servers and rules), nothing saved; the request comes on stdin. Its tools off
+    // (commands, browser, computer use, apps, plugins, agents, web search): a chat's text cannot make it run or open anything —
+    // asked to run a command, 0.162 said "I cannot run commands" with these off, and tried to run it without them.
     async ask(exe, system, prompt, model, signal) {
       const out = await run(exe, ['exec', '-', '--json', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules',
-        '--sandbox', 'read-only', '--color', 'never', ...(model ? ['-m', model] : [])], { input: both(system, prompt), timeout: 300_000, signal })
+        '--sandbox', 'read-only', '--color', 'never', ...CODEX_OFF.flatMap(f => ['--disable', f]), '-c', 'web_search=disabled', ...(model ? ['-m', model] : [])],
+        { input: both(system, prompt), timeout: 300_000, signal })
         .catch(e => (e as { stdout?: string }).stdout || Promise.reject(e)); // a failed turn exits with 1 after its events
       const events = out.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l));
       const used = events.find(e => e.type === 'turn.completed')?.usage;
-      if (used) usage.onSpent((used.input_tokens ?? 0) + (used.output_tokens ?? 0));
+      if (used) usage.onSpent((used.input_tokens ?? 0) + (used.output_tokens ?? 0) + (used.reasoning_output_tokens ?? 0));
       const text = events.filter(e => e.type === 'item.completed' && e.item?.type === 'agent_message').at(-1)?.item.text;
       if (text) return String(text).trim();
       throw new Error(events.find(e => e.type === 'turn.failed')?.error?.message ?? events.filter(e => e.type === 'error').at(-1)?.message ?? 'no answer');
@@ -113,6 +124,8 @@ const PROVIDERS: Provider[] = [
       const out = await run(exe, ['-p', 'Do what the text above asks.', '--output-format', 'json', ...(model ? ['-m', model] : [])],
         { input: both(system, prompt), timeout: 300_000, signal }).catch(e => (e as { stdout?: string }).stdout || Promise.reject(e));
       const r = json(out);
+      const used = Object.values(r.stats?.models ?? {}).reduce((s: number, m: any) => s + (Number(m?.tokens?.total) || 0), 0); // per model in its stats
+      if (used) usage.onSpent(used);
       if (r.error || typeof r.response !== 'string') throw new Error(r.error?.message ?? 'no answer');
       return r.response.trim();
     } },
