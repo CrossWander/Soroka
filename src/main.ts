@@ -1352,12 +1352,14 @@ async function nudge(chatId: string) {
 }
 // ponytail: Teams writes the user's own last message as "Вы: …" / "Ви: …" / "You: …" (ru/uk/en UI); other languages are not caught
 const MINE = /^(Вы|Ви|You): /;
+// the preview alone anyone can fake ("You: …", or a guest named "You"); the user's own last message leaves the chat read
+const mine = (c: teams.Chat) => !c.unread && MINE.test(c.preview);
 // The user's own questions: the chat's last message is theirs and asks something. Kept until an answer comes; only from
 // today, so the first run does not bring up old ones. ponytail: a question mark in the preview Teams cuts; a long question may lose it.
 function trackQuestions(chats: teams.Chat[]) {
   const today = /^\d{1,2}:\d{2}$/, before = JSON.stringify(state.asked);
   for (const c of chats) {
-    const q = (c.type === 'direct' || c.type === 'group') && !named(c, settings.muteFrom) && MINE.test(c.preview) && c.preview.includes('?')
+    const q = (c.type === 'direct' || c.type === 'group') && !named(c, settings.muteFrom) && mine(c) && c.preview.includes('?')
       ? c.preview.replace(MINE, '') : '';
     if (!q) { delete state.asked[c.id]; continue; } // answered, or the user's last word asks nothing
     if (state.asked[c.id]?.text === q || !today.test(c.time)) continue;
@@ -1379,12 +1381,12 @@ function closeAnswered(chats: teams.Chat[]) {
     if (!c || d.busy) continue;
     if (!d.incoming && !d.nudge) {
       if (d.preview === undefined) { d.preview = c.preview; changed = true; continue; } // a card from before 0.29
-      if (c.preview !== d.preview && MINE.test(c.preview)) d.status = 'answered';
+      if (c.preview !== d.preview && mine(c)) d.status = 'answered';
       else if (Date.now() - d.at > 86_400_000 && !d.remindAt) d.status = 'rejected';
       else continue;
     }
-    else if (d.nudge) { if (MINE.test(c.preview)) continue; d.status = 'answered'; } // the other side answered the question
-    else if (MINE.test(c.preview)) d.status = 'answered';
+    else if (d.nudge) { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
+    else if (mine(c)) d.status = 'answered';
     else if (mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt) d.status = 'read';
     else continue;
     delete d.context; changed = true;
