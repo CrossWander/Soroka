@@ -12,6 +12,8 @@ Please report it privately. Do not open a public issue.
 
 Use **Security → Report a vulnerability** on this repository: [open a private report](https://github.com/CrossWander/Soroka/security/advisories/new). Only the maintainer sees it.
 
+If that does not work for you, email dikalopavel@gmail.com.
+
 Please include:
 - the Soroka version (Settings → footer) and the Windows version;
 - what an attacker can do, and what they need for it: a message in a chat, a web page, a program on the same computer;
