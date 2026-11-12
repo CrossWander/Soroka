@@ -7,8 +7,10 @@
 <style>
   /* A card in the corner above the clock: slides up, lives a few seconds, stays while the mouse is on it.
      The window grows upward for the "⋯" menu, so the card sits at the bottom of the page. */
-  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --on-accent: #ffffff; --error: #c4314b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); --field: #f5f5f5; --menu: #ffffff; }
-  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --on-accent: #16171d; --error: #ff8a9e; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); --field: #1f1f1f; --menu: #323232; } }
+  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --on-accent: #ffffff; --error: #c4314b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); --field: #f5f5f5; --menu: #ffffff;
+    --p1: #0f7b6c; --p2: #a15c00; }
+  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --on-accent: #16171d; --error: #ff8a9e; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); --field: #1f1f1f; --menu: #323232;
+    --p1: #6fd3c2; --p2: #f2b56b; } }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); }
   body { display: flex; flex-direction: column; justify-content: flex-end; }
   [hidden] { display: none !important; }
@@ -21,6 +23,19 @@
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.accent { color: var(--accent); } .title.error { color: var(--error); }
   .message { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .sub:empty { display: none; }
+  /* a chat's messages as they came: one person's in a row as one run, the author over it in a group, the time under it */
+  .talk { display: grid; gap: 6px; margin-top: 4px; max-height: 196px; overflow-y: auto; overscroll-behavior: contain; }
+  .run { display: grid; gap: 2px; justify-items: start; min-width: 0; }
+  .run .who { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .run .who.p1 { color: var(--p1); } .run .who.p2 { color: var(--p2); }
+  .bubble { background: var(--btn); border-radius: 10px 10px 10px 3px; padding: 4px 9px; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+  .run .bubble:not(:last-of-type) { border-radius: 10px; }
+  .bubble.me { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* the one that mentions the user */
+  .run time { color: var(--muted); font-size: 11px; }
+  @media (prefers-reduced-motion: no-preference) { .bubble.fresh { animation: fresh 1.4s ease-out; } }
+  @keyframes fresh { from { background: color-mix(in srgb, var(--accent) 26%, transparent); } }
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .hint.error { color: var(--error); }
   .hint:empty, .actions:empty { display: none; }
@@ -72,7 +87,7 @@
 <body>
   <div class="card" id="card">
     <img id="icon" alt="">
-    <div><div class="title" id="title"></div><div class="message" id="message"></div><div class="hint" id="hint"></div></div>
+    <div><div class="title" id="title"></div><div class="sub" id="sub"></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div><div class="hint" id="hint"></div></div>
     <button class="close" id="close">✕</button>
     <div class="actions" id="actions"></div>
     <div class="reply" id="reply" hidden>
@@ -110,6 +125,40 @@
   const say = (text, error) => { $('hint').textContent = text; $('hint').classList.toggle('error', !!error); return fit(); };
   const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button')) b.disabled = on; };
+  // A chat's card gathers its messages as they come (one person's in a row as one run, the author over it in a group);
+  // a single message of a direct chat stays the plain text it always was. fresh: how many at the end just came.
+  function showMsgs(msgs, fresh = 0) {
+    const many = msgs.length > 1 || !!msgs[0]?.who;
+    $('talk').hidden = !many; $('message').hidden = many;
+    $('sub').textContent = msgs.length > 1 ? plural(msgs.length) : '';
+    if (!many) return;
+    const runs = [], people = [];
+    for (const m of msgs) { const r = runs.at(-1); if (r && r.who === m.who) r.items.push(m); else runs.push({ who: m.who, items: [m] }); }
+    $('talk').replaceChildren(...runs.map(r => {
+      const run = document.createElement('div');
+      run.className = 'run';
+      if (r.who) {
+        const w = document.createElement('span');
+        const i = people.includes(r.who) ? people.indexOf(r.who) : people.push(r.who) - 1;
+        w.className = `who${i % 3 ? ` p${i % 3}` : ''}`;
+        w.textContent = r.who;
+        run.append(w);
+      }
+      for (const m of r.items) {
+        const b = document.createElement('div');
+        b.className = 'bubble' + (m.me ? ' me' : '');
+        b.textContent = m.text;
+        run.append(b);
+      }
+      const time = document.createElement('time');
+      time.textContent = r.items.at(-1).time;
+      run.append(time);
+      return run;
+    }));
+    const bubbles = $('talk').querySelectorAll('.bubble');
+    for (let i = Math.max(0, bubbles.length - fresh); i < bubbles.length; i++) bubbles[i].classList.add('fresh');
+    $('talk').scrollTop = $('talk').scrollHeight; // the newest in view
+  }
 
   bridge.on('toast', async t => {
     await i18n;
@@ -117,6 +166,7 @@
     $('icon').src = t.icon;
     $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
     $('message').textContent = t.message || '';
+    showMsgs(t.reply?.msgs ?? []);
     say(t.hint || '');
     $('close').title = t.closeLabel;
     n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false; keys = false; sending = false; clearTimeout(idle);
@@ -183,6 +233,16 @@
     if (variants.length) $('field').value = variants[next++ % variants.length];
     $('field').focus();
   };
+  // The chat's next message, while its card is up: into the card, and the card stays on for it (not under the mouse or
+  // the reply field: those keep it anyway). The variants were for fewer messages: ✨ makes new ones.
+  bridge.on('toast:msgs', v => {
+    if (v.n !== n) return;
+    clearTimeout(leaving); card.classList.remove('leaving'); card.classList.add('shown'); // it was just going: it stays
+    showMsgs(v.msgs, 1); // one message at a time
+    variants = []; next = 0;
+    fit();
+    if (!replying && $('menu').hidden && !card.matches(':hover')) arm();
+  });
   // drafts mode: the variants the app was still making when the card came
   bridge.on('toast:variants', v => {
     if (v.n !== n) return;
