@@ -416,7 +416,7 @@ handle('toast:click', (_e, action: number) => { // -1 = the card itself
 });
 // a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come
 handle('draft:keep', (_e, n: string, text: unknown) => {
-  const d = state.drafts[String(n)];
+  const d = state.drafts[askedOnCard(n)];
   if (d?.status === 'pending' && typeof text === 'string' && text.trim()) { d.text = text.slice(0, 5000); draftsChanged(); }
 });
 // A Claude session sends only what the user confirms in the app too: a card with the chat and the text, and the request
@@ -1738,7 +1738,10 @@ handle('notify:test', () => toast({ title: t('toast.test'), message: t('toast.te
 handle('teams:show', () => showTeams());
 handle('style:learn', logged('learn style', () => learnStyle()));
 handle('drafts:get', () => pending());
-handle('draft:send', logged('send', (_e, n: string, text: string, quote: unknown) => sendDraft(n, text, quote === true)));
+// A card stays up while the user is at it, and its chat may be read meanwhile elsewhere (the phone, the Teams window):
+// "read" only closes a card nobody asked anything of. Asked on the card after all, the message waits for its answer again.
+const askedOnCard = (n: unknown) => { const k = String(n), d = state.drafts[k]; if (d?.status === 'read') d.status = 'pending'; return k; };
+handle('draft:send', logged('send', (_e, n: string, text: string, quote: unknown) => sendDraft(askedOnCard(n), text, quote === true)));
 handle('react:open', (_e, n: string) => showReactions(String(n)));
 handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
 handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
@@ -1757,9 +1760,9 @@ handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, qu
 // the variants come back to the caller: a card asks for a snoozed draft too, which the answers list leaves out
 // hint: what the reply must say, typed by the user before ✨
 handle('draft:suggest', async (_e, n: string, hint: unknown) => {
-  await suggest(String(n), { hint: typeof hint === 'string' ? hint : '' });
+  await suggest(askedOnCard(n), { hint: typeof hint === 'string' ? hint : '' });
   const d = state.drafts[String(n)];
-  return { variants: d?.variants ?? [], error: d?.error };
+  return { variants: d?.variants ?? [], error: d?.status === 'pending' ? d.error : t('err.handled') }; // answered meanwhile: say so, not nothing
 });
 handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
 handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
