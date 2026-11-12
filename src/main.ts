@@ -559,18 +559,24 @@ handle('signin:act', (e, name: string) => {
   signInCard.close();
   setTimeout(() => { if (signInAsked && !signInCard && !signInWin && Date.now() >= signInLater) showSignInCard('ask'); }, 60 * 60_000);
 });
-function signIn() {
+// check: the user closed the window after Microsoft asked, maybe signed in by then: the same page, hidden, tells which.
+function signIn(check = false) {
   if (signInWin) { signInWin.show(); return signInWin.focus(); }
-  log('sign-in: opening Microsoft');
+  log(check ? 'sign-in: window closed, checking' : 'sign-in: opening Microsoft');
   if (signInAsked || signInCard) showSignInCard('wait');
   const win = signInWin = new BrowserWindow({ ...PLAIN, width: 520, height: 680, show: false, webPreferences: { session: session.fromPartition('persist:teams') } });
   const ACCOUNT = /^https:\/\/myaccount\.microsoft\.com\//;
   let asked = false, settled = false, done: NodeJS.Timeout | undefined;
   win.webContents.on('did-navigate', (_e, url) => {
     clearTimeout(done);
-    if (!ACCOUNT.test(url)) { if (!asked) { asked = true; win.show(); } return; } // Microsoft's sign-in, or the organization's own
+    log('sign-in: at', new URL(url).host); // where a sign-in stops, next time one does
+    if (!ACCOUNT.test(url)) { // Microsoft's sign-in, or the organization's own
+      if (check) return win.close(); // still not signed in
+      if (!asked) { asked = true; win.show(); }
+      return;
+    }
     const settle = () => {
-      if (win.webContents.isLoading()) { done = setTimeout(settle, 2000); return; }
+      if (win.webContents.isLoadingMainFrame()) { done = setTimeout(settle, 2000); return; } // the page's own frames load on and on
       log(`sign-in: ${asked ? 'signed in again' : 'Microsoft did not ask'}`);
       settled = true;
       win.close();
@@ -583,7 +589,9 @@ function signIn() {
   win.on('closed', () => {
     clearTimeout(done);
     if (signInWin === win) signInWin = null;
-    if (!settled && signInState === 'wait') showSignInCard('ask'); // closed before signing in: back to asking
+    if (settled || signInState !== 'wait') return;
+    if (asked) signIn(true);
+    else showSignInCard('ask'); // closed before signing in: back to asking
   });
   win.loadURL('https://myaccount.microsoft.com/').catch(e => { // ERR_ABORTED: the page went on to the sign-in
     if ((e as { code?: string }).code !== 'ERR_ABORTED') { log('sign-in:', errorText(e)); win.close(); }
