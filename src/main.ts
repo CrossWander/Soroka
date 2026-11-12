@@ -1055,6 +1055,12 @@ const newer = (a: string, b: string) => {
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
   return false;
 };
+// An installer runs only with its release's signature (scripts/sign-release.mjs in the release job, the key a secret of the
+// GitHub environment "release", which only tag runs get): a file swapped in a release, or put there by anything but that
+// job, is not run. The signature covers the file name, so one release's installer cannot pass for another version.
+const UPDATE_KEY = crypto.createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwdwj95MyhSQA3ZEf3yPmIumHKpnTfPGIxQQShJK/ub0=\n-----END PUBLIC KEY-----\n');
+const signedInstaller = (name: string, exe: Buffer, sig: string) =>
+  crypto.verify(null, Buffer.from(`${name} ${crypto.createHash('sha256').update(exe).digest('hex')}`), UPDATE_KEY, Buffer.from(sig.trim(), 'base64'));
 let updateShown = ''; // told once a run
 async function checkUpdate() {
   if (!app.isPackaged) return; // a dev run is no installed version
@@ -1068,6 +1074,7 @@ async function checkUpdate() {
     // the installer of that very release, from this repository only
     const url = `${RELEASES}/download/v${version}/Soroka-Setup-${version}.exe`;
     if (!rel.assets?.some(a => a.browser_download_url === url)) return log(`update: ${version} has no installer yet`);
+    if (!rel.assets?.some(a => a.browser_download_url === `${url}.sig`)) return log(`update: ${version} is not signed yet`); // asked again tomorrow
     updateShown = version;
     log(`update: ${version} is out`);
     toast({ title: t('update.title', { v: version }), message: t('update.text', { cur: app.getVersion() }), tone: 'accent', long: true,
@@ -1080,10 +1087,12 @@ async function checkUpdate() {
 async function installUpdate(url: string, version: string) {
   toast({ title: t('update.loading', { v: version }), message: t('update.loadingText') });
   try {
-    const r = await net.fetch(url, { credentials: 'omit' }); // GitHub sends it from its file storage
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const file = path.join(app.getPath('temp'), `Soroka-Setup-${version}.exe`);
-    fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+    const [r, s] = await Promise.all([url, `${url}.sig`].map(u => net.fetch(u, { credentials: 'omit' }))); // GitHub sends them from its file storage
+    if (!r.ok || !s.ok) throw new Error(`HTTP ${r.ok ? s.status : r.status}`);
+    const name = `Soroka-Setup-${version}.exe`, exe = Buffer.from(await r.arrayBuffer());
+    if (!signedInstaller(name, exe, await s.text())) throw new Error(t('update.badSig'));
+    const file = path.join(app.getPath('temp'), name);
+    fs.writeFileSync(file, exe);
     log(`update: running the installer of ${version}`);
     spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
     quitting = true;

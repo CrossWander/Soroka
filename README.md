@@ -52,7 +52,7 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 - Interface in Ukrainian, English and Russian. When you pick Soroka's language or theme, Teams switches to it too, once; a later change in Teams itself stays.
 - Hotkeys in the Teams window: Ctrl+Shift+R suggest a reply, Ctrl+Shift+S summary, Ctrl+Shift+I improve my text, F5 reload Teams.
 - When hidden, Soroka gives its memory back to Windows (about 250 MB instead of 1.5 GB).
-- A new version comes as a card: «Install» downloads it from the Releases page and Soroka restarts as the new one.
+- A new version comes as a card: «Install» downloads it from the Releases page, checks the author's signature and Soroka restarts as the new one.
 
 ## AI: your own plan, no API keys
 
@@ -109,7 +109,7 @@ npm run dist       # build release/Soroka-Setup-<version>.exe
 
 If you run it from a terminal inside VS Code, remove `ELECTRON_RUN_AS_NODE` first. VS Code sets it, and with it Electron starts as plain Node.
 
-Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches the version in `package.json`, and [the release workflow](.github/workflows/release.yml) builds the installer and publishes it on the Releases page.
+Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches the version in `package.json`, and [the release workflow](.github/workflows/release.yml) builds the installer and publishes it on the Releases page. It also signs the installer for the update check with the secret `UPDATE_SIGNING_KEY` of the environment `release` and publishes `Soroka-Setup-X.Y.Z.exe.sig` next to it. Installed copies offer an update only with that signature, and never run an installer whose signature does not match.
 
 ## Local API for AI sessions
 

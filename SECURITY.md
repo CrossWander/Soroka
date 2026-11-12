@@ -28,7 +28,7 @@ This is a personal project maintained in spare time. You will get an answer as s
 For example:
 - a chat message, a web page or a link that makes Soroka or its AI run a program, read a file or send something without your click;
 - reaching the local API (`127.0.0.1:8765`) or the app's internal calls from a web page or without the token;
-- a way to make the update check install something that is not the installer from this repository's releases;
+- a way to make the update check install something the maintainer did not sign;
 - your Teams session, the local API token or the Jira token leaving the computer or being stored in plain text.
 
 Bugs in Microsoft Teams itself, or in the AI programs Soroka starts, belong to their makers.

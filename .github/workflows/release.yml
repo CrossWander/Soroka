@@ -1,7 +1,8 @@
-# A tag vX.Y.Z builds the Windows installer and publishes it as the release "Soroka X.Y.Z".
-# The tag must match package.json's version. The installer is not code-signed.
-# The build runs the code of every npm package it installs, so it gets a read-only token, kept out of .git/config;
-# only the release job, which runs no package, may write. Actions are pinned to commits: a moved tag changes nothing here.
+# A tag vX.Y.Z builds the Windows installer and publishes it, with its update signature, as the release "Soroka X.Y.Z".
+# The tag must match package.json's version. The installer is not code-signed (Authenticode).
+# The build runs the code of every npm package it installs, so it gets a read-only token, kept out of .git/config, and no
+# secret; only the release job, which installs nothing, may write and gets the signing key: the secret UPDATE_SIGNING_KEY
+# of the environment "release", which only runs of tags v* may use. Actions are pinned to commits: a moved tag changes nothing.
 name: Release
 
 on:
@@ -53,16 +54,28 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    environment: release # holds UPDATE_SIGNING_KEY
     permissions:
       contents: write # to create the release
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts # the signing script, nothing to install
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: installer
+
+      - name: Sign the installer for the update check
+        env:
+          SOROKA_UPDATE_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: node scripts/sign-release.mjs sign "Soroka-Setup-$VERSION.exe"
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
-        run: gh release create "$GITHUB_REF_NAME" "Soroka-Setup-$VERSION.exe" --title "Soroka $VERSION" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" "Soroka-Setup-$VERSION.exe" "Soroka-Setup-$VERSION.exe.sig" --title "Soroka $VERSION" --generate-notes
