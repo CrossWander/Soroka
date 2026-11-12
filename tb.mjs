@@ -12,13 +12,24 @@ const appData = { win32: process.env.APPDATA, darwin: path.join(os.homedir(), 'L
 const tokenFile = ['Soroka', 'TeamsBridge'].map(dir => path.join(appData, dir, 'token.txt')).find(f => fs.existsSync(f));
 if (!tokenFile) { console.error('Soroka has never run on this machine'); process.exit(3); }
 const base = `http://127.0.0.1:${process.env.PORT ?? 8765}`;
-const headers = { 'x-token': fs.readFileSync(tokenFile, 'utf8').trim(), 'content-type': 'application/json' };
+const token = fs.readFileSync(tokenFile, 'utf8').trim();
 const [cmd, a, b, c] = process.argv.slice(2);
 
-const call = async (url, init) => {
-  const res = await fetch(base + url, { headers, ...init }).catch(() => null);
+// The token never leaves this process: the request is signed with it (HMAC-SHA256: method, path, time, a one-time nonce)
+// and so is Soroka's answer to that nonce. A program that took Soroka's port gets nothing it can use, and what it
+// answers is not shown.
+const sign = (...parts) => crypto.createHmac('sha256', token).update(parts.join('\n')).digest('hex');
+const call = async (url, init = {}) => {
+  const u = new URL(base + url), nonce = crypto.randomBytes(16).toString('hex'), ts = String(Date.now());
+  const headers = { 'content-type': 'application/json', 'x-nonce': nonce, 'x-ts': ts, 'x-sig': sign(init.method ?? 'GET', u.pathname + u.search, ts, nonce) };
+  const res = await fetch(u, { ...init, headers }).catch(() => null);
   if (!res) { console.error('Soroka is not running'); process.exit(3); }
-  const body = await res.json();
+  const text = await res.text();
+  if (res.headers.get('x-sig') !== sign(nonce, String(res.status), crypto.createHash('sha256').update(text).digest('hex'))) {
+    console.error(`${res.status}: the answer is not signed by Soroka. Another program may hold port ${u.port}, or Soroka is older than this tb.mjs (0.30.2).`);
+    process.exit(4);
+  }
+  const body = JSON.parse(text);
   if (!res.ok) { console.error(`${res.status}: ${s(body.error)}`); process.exit(1); } // a 409 names chats
   return body;
 };

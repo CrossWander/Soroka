@@ -1707,8 +1707,18 @@ handle('jira:login', () => { // always here, whatever the links setting: the car
 handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
 handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
 
-// ---------- local API for Claude sessions (tb.mjs); header x-token = token.txt ----------
-const json = (res: http.ServerResponse, code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(body)); };
+// ---------- local API for Claude sessions (tb.mjs); requests and answers signed with token.txt ----------
+// The token itself never travels: a program that took the port first (another user of this computer) would get it.
+// tb.mjs signs each request (method, path, time, a one-time nonce) with HMAC-SHA256 under the token; Soroka signs its
+// answer to that nonce, so tb.mjs shows nothing a stand-in on the port made up.
+const sign = (...parts: string[]) => crypto.createHmac('sha256', TOKEN).update(parts.join('\n')).digest('hex');
+const answering = new WeakMap<http.ServerResponse, string>(); // the request's nonce, which the answer is signed to
+const json = (res: http.ServerResponse, code: number, body: unknown) => {
+  const text = JSON.stringify(body), nonce = answering.get(res);
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8',
+    ...(nonce ? { 'x-sig': sign(nonce, String(code), crypto.createHash('sha256').update(text).digest('hex')) } : {}) });
+  res.end(text);
+};
 const body = (req: http.IncomingMessage) => new Promise<any>((ok, no) => {
   let b = '', big = false; req.setEncoding('utf8'); req.on('error', no);
   // a message, not a file: past 64 KB the rest is read and dropped, and the answer says why
@@ -1716,16 +1726,28 @@ const body = (req: http.IncomingMessage) => new Promise<any>((ok, no) => {
   req.on('end', () => { try { ok(JSON.parse(b || '{}')); } catch { no(Object.assign(new Error('bad json'), { status: 400 })); } });
 });
 const need = (ok: unknown, what: string) => { if (!ok) throw Object.assign(new Error(`${what} required`), { status: 400 }); };
-// The token compared in constant time; the request from this computer's programs only: no browser page (it sends an Origin)
-// and no other host name pointed at 127.0.0.1 (a site's own DNS name, to reach the API through the user's browser).
-const tokenOk = (given: unknown) => typeof given === 'string' && given.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(TOKEN));
+// The request's nonce when it is signed, fresh (30 s) and not seen before (a request cannot be played again), else ''.
+// The request from this computer's programs only, checked before: no browser page (it sends an Origin) and no other host
+// name pointed at 127.0.0.1 (a site's own DNS name, to reach the API through the user's browser).
+const nonces = new Map<string, number>();
+function signedBy(req: http.IncomingMessage) {
+  const [nonce, ts, sig] = ['x-nonce', 'x-ts', 'x-sig'].map(h => String(req.headers[h] ?? '')), now = Date.now();
+  for (const [n, at] of nonces) if (now - at > 60_000) nonces.delete(n);
+  if (!/^[0-9a-f]{32}$/.test(nonce) || nonces.has(nonce) || !(Math.abs(now - Number(ts)) < 30_000)) return '';
+  const want = sign(req.method ?? '', req.url ?? '', ts, nonce);
+  if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return ''; // constant time
+  nonces.set(nonce, now);
+  return nonce;
+}
 
 function startApi() {
   const PORT = Number(process.env.PORT ?? 8765);
   http.createServer(async (req, res) => {
     try {
       if (req.headers.origin || ![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host ?? '')) return json(res, 403, { error: 'local programs only' });
-      if (!tokenOk(req.headers['x-token'])) return json(res, 401, { error: 'bad token' });
+      const nonce = signedBy(req);
+      if (!nonce) return json(res, 401, { error: 'not signed with token.txt' });
+      answering.set(res, nonce);
       if (settings.aiOff) return json(res, 403, { error: t('toast.aiOff') }); // "Do not use AI": AI sessions get nothing from Teams either
       if (status !== 'ready') return json(res, 503, { error: `teams is not ready: ${status}` });
       const url = new URL(req.url ?? '/', 'http://x');
@@ -1786,7 +1808,7 @@ function startApi() {
       }
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, (e as { status?: number }).status ?? 500, { error: errorText(e) }); }
-  }).on('error', e => { // the port taken: tb.mjs would hand the token to whatever program holds it
+  }).on('error', e => { // the port taken: Claude sessions reach that program instead, and tb.mjs refuses its answers
     log('api:', e.message);
     toast({ title: t('toast.apiBusy', { port: PORT }), message: t('toast.apiBusyText'), tone: 'error', long: true });
   }).listen(PORT, '127.0.0.1', () => log(`api on 127.0.0.1:${PORT}`));

@@ -113,7 +113,7 @@ Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches the versi
 
 ## Local API for AI sessions
 
-Soroka serves an API on `127.0.0.1:8765` for AI sessions on your computer, such as Claude Code. Every request carries the `x-token` header; the token is in `%APPDATA%\Soroka\token.txt`. `tb.mjs` wraps it:
+Soroka serves an API on `127.0.0.1:8765` for AI sessions on your computer, such as Claude Code. Every request and every answer is signed with the token in `%APPDATA%\Soroka\token.txt` (HMAC-SHA256); the token itself is never sent. `tb.mjs` wraps it:
 
 ```bash
 node tb.mjs chats                         # the chat list: * unread, @ mention
