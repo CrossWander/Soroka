@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Soroka</title>
+<style>
+  /* Teams asks to sign in again: one card above the clock, in the look of the app's cards, that follows the sign-in through.
+     The band on top says the state: red, a sign-in is due; the accent, Microsoft's window is open; green, signed in again.
+     The window is transparent: the page draws the card with its shadow and asks for its height (signin:size). */
+  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.08); --accent: #5b5fc7; --on-accent: #ffffff;
+    --error: #c4314b; --ok: #0e7a0b; --btn: rgba(0,0,0,.05); --btn-hover: rgba(0,0,0,.1); }
+  @media (prefers-color-scheme: dark) { :root { --card: #2b2b2b; --fg: #f3f3f3; --muted: #b3b3b3; --line: rgba(255,255,255,.08); --accent: #9ea2ff; --on-accent: #16171d;
+    --error: #ff8a9e; --ok: #6ccb5f; --btn: rgba(255,255,255,.07); --btn-hover: rgba(255,255,255,.13); } }
+  html, body { margin: 0; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); user-select: none; }
+  [hidden] { display: none !important; }
+  .card { margin: 12px 16px 20px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.28); overflow: hidden;
+    opacity: 0; transform: translateY(110%); transition: opacity .38s cubic-bezier(.215,.61,.355,1), transform .38s cubic-bezier(.215,.61,.355,1); }
+  .card.shown { opacity: 1; transform: none; }
+  .band { height: 4px; background: var(--error); transition: background .3s; }
+  .wait .band { background: var(--accent); } .done .band { background: var(--ok); }
+  .body { padding: 12px 14px 14px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 0 12px; align-items: start; }
+  .badge { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--error); background: color-mix(in srgb, var(--error) 18%, transparent); }
+  .wait .badge { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .done .badge { color: var(--ok); background: color-mix(in srgb, var(--ok) 18%, transparent); }
+  .badge svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .title { font-weight: 600; color: var(--error); }
+  .wait .title { color: var(--fg); } .done .title { color: var(--ok); }
+  .tip { grid-column: 1 / 4; margin-top: 10px; font-size: 12px; color: var(--muted); background: var(--btn); border-radius: 6px; padding: 6px 8px; }
+  .actions { grid-column: 1 / 4; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  button { font: inherit; font-size: 13px; border: 0; border-radius: 6px; color: var(--fg); cursor: pointer; padding: 4px 10px; background: var(--btn); }
+  button:hover { background: var(--btn-hover); }
+  .primary { background: var(--accent); color: var(--on-accent); }
+  .primary:hover { background: var(--accent); filter: brightness(1.1); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .close { background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; }
+  .close:hover { background: transparent; color: var(--fg); }
+</style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-ask" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3M12 14.5v2.5"/></symbol>
+    <symbol id="i-wait" viewBox="0 0 24 24"><circle cx="8.5" cy="14.5" r="4"/><path d="M11.5 11.5l8-8M17 6l2.5 2.5M15 8l2 2"/></symbol>
+    <symbol id="i-done" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.4 2.4 4.8-5"/></symbol>
+  </svg>
+  <div class="card" id="card">
+    <div class="band"></div>
+    <div class="body">
+      <div class="badge"><svg><use id="icon" href="#i-ask"/></svg></div>
+      <div><div class="title" id="title"></div><div id="text"></div></div>
+      <button class="close" id="close" data-i18n-title="toast.close" data-i18n-aria="toast.close">✕</button>
+      <div class="tip" id="tip" data-i18n="signin.tip"></div>
+      <div class="actions" id="actions"></div>
+    </div>
+  </div>
+<script src="i18n.js"></script>
+<script type="module">
+  await i18n;
+  const $ = id => document.getElementById(id);
+  const act = name => bridge.invoke('signin:act', name).catch(() => {});
+  $('close').onclick = () => act('later'); // as "Remind me in an hour": the "!" on the tray icon stays
+  const STATES = {
+    ask: { title: 'signin.title', text: 'signin.why', actions: [['act.signIn', 'go', true], ['signin.later', 'later']] },
+    wait: { title: 'signin.wait', text: 'signin.waitText', actions: [['signin.show', 'show']] },
+    done: { title: 'signin.done', text: 'signin.doneText', actions: [] },
+  };
+  bridge.on('signin', async state => {
+    const s = STATES[state];
+    if (!s) return;
+    const shown = $('card').classList.contains('shown'); // the same card goes on to the next state: it slides up only once
+    $('card').className = `card ${state}${shown ? ' shown' : ''}`;
+    $('icon').setAttribute('href', `#i-${state}`);
+    $('title').textContent = t(s.title);
+    $('text').textContent = t(s.text);
+    $('tip').hidden = state === 'done';
+    $('close').hidden = state === 'done';
+    $('actions').replaceChildren(...s.actions.map(([label, name, primary]) => {
+      const b = document.createElement('button');
+      b.textContent = t(label);
+      if (primary) b.className = 'primary';
+      b.onclick = () => act(name);
+      return b;
+    }));
+    $('actions').hidden = !s.actions.length;
+    await bridge.invoke('signin:size', $('card').offsetHeight + 32); // + margins left for the shadow
+    if (!shown) requestAnimationFrame(() => $('card').classList.add('shown'));
+  });
+</script>
+</body>
+</html>

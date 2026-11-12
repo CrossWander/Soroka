@@ -293,20 +293,29 @@ export async function watchCall(onChange: (on: string) => void) {
 
 // ---------- Teams asking to sign in again ----------
 // Its banner ("Sign in again… a request from your IT department or Teams") has a Sign in button that here only retries
-// Teams' quiet sign-in in the page, which Microsoft refuses when it wants the password again: nothing happens. Told at
-// that button's click, so the app opens Microsoft's sign-in itself.
+// Teams' quiet sign-in in the page, which Microsoft refuses when it wants the password again: nothing happens. Told when
+// the button comes ('shown') and goes ('gone'), the state as it is at every (re)attach, and its click ('click'), so the
+// app says so even with the window hidden and opens Microsoft's sign-in itself.
 // ponytail: the button is told by its label in a ru/uk/en Teams (outside messages); another language: the banner as it is.
 const SIGNIN = 'tbSignIn';
-export async function watchSignIn(onClick: () => void) {
-  await bind(SIGNIN, () => onClick());
+export async function watchSignIn(onChange: (what: 'shown' | 'gone' | 'click') => void) {
+  await bind(SIGNIN, what => { if (what === 'shown' || what === 'gone' || what === 'click') onChange(what); });
   await run(([name, msg]) => {
     const w = window as any;
+    const LABEL = /^(войти|увійти|sign in)$/i;
+    const ours = (b: Element | null) => !!b && !b.closest(msg) && LABEL.test((b.textContent ?? '').trim());
     if (w.__tbSignIn) document.removeEventListener('click', w.__tbSignIn, true);
-    w.__tbSignIn = (e: Event) => {
-      const b = (e.target as Element | null)?.closest?.('button') as HTMLElement | null;
-      if (b && !b.closest(msg) && /^(войти|увійти|sign in)$/i.test(b.innerText.trim())) w[name]?.('');
-    };
+    w.__tbSignIn = (e: Event) => { if (ours((e.target as Element | null)?.closest?.('button') ?? null)) w[name]?.('click'); };
     document.addEventListener('click', w.__tbSignIn, true);
+    const read = () => [...document.querySelectorAll('button')].some(b => ours(b) && b.getClientRects().length) ? 'shown' : 'gone';
+    w.__tbSignInSeen?.disconnect();
+    let last = read(), timer = 0;
+    w[name]?.(last);
+    w.__tbSignInSeen = new MutationObserver(() => { // once a second at most: the banner is no call
+      if (timer) return;
+      timer = window.setTimeout(() => { timer = 0; const now = read(); if (now !== last) { last = now; w[name]?.(now); } }, 1000);
+    });
+    w.__tbSignInSeen.observe(document.body, { subtree: true, childList: true });
   }, [SIGNIN, MSG]);
 }
 
