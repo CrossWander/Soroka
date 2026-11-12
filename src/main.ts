@@ -823,14 +823,50 @@ const variantsRequest = (d: Draft, hint = ''): Request => { notToAi(d.title); re
     + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.nudge ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : '')
     + (hint ? `\nWhat the reply must say:\n<<<\n${hint}\n>>>` : ''),
 }; };
+// Windows: text on the clipboard with the formats that keep it out of the clipboard history (Win+V), the cloud clipboard
+// and clipboard monitors (learn.microsoft.com, "Cloud Clipboard and Clipboard History Formats"); Electron cannot add them.
+// false when the clipboard is busy or the call fails: the caller copies the plain way.
+let copyPrivate: ((text: string) => boolean) | null | undefined;
+function privateCopy(text: string) {
+  if (process.platform === 'win32' && copyPrivate === undefined) try {
+    const koffi = require('koffi') as typeof import('koffi');
+    const u32 = koffi.load('user32.dll'), k32 = koffi.load('kernel32.dll');
+    const open = u32.func('bool __stdcall OpenClipboard(uintptr_t owner)'), empty = u32.func('bool __stdcall EmptyClipboard()');
+    const set = u32.func('void *__stdcall SetClipboardData(uint32_t format, void *data)'), close = u32.func('bool __stdcall CloseClipboard()');
+    const format = u32.func('uint32_t __stdcall RegisterClipboardFormatW(str16 name)');
+    const alloc = k32.func('void *__stdcall GlobalAlloc(uint32_t flags, size_t bytes)'), free = k32.func('void *__stdcall GlobalFree(void *mem)');
+    const lock = k32.func('void *__stdcall GlobalLock(void *mem)'), unlock = k32.func('bool __stdcall GlobalUnlock(void *mem)');
+    const move = k32.func('void __stdcall RtlMoveMemory(void *to, const void *from, size_t bytes)');
+    // the data becomes the system's once SetClipboardData takes it
+    const put = (fmt: number, data: Buffer) => {
+      const mem = alloc(0x0002, data.length); // GMEM_MOVEABLE
+      if (!mem) return false;
+      const at = lock(mem);
+      if (at) { move(at, data, data.length); unlock(mem); }
+      if (at && set(fmt, mem)) return true;
+      free(mem);
+      return false;
+    };
+    const zero = Buffer.alloc(4); // a DWORD 0: "no"
+    // ponytail: the owner window is the Teams window; with no owner EmptyClipboard leaves SetClipboardData failing
+    copyPrivate = text => {
+      if (!open(teamsWin.getNativeWindowHandle().readBigUInt64LE(0))) return false;
+      try {
+        return empty() && put(13, Buffer.from(`${text}\0`, 'utf16le')) // CF_UNICODETEXT
+          && [format('ExcludeClipboardContentFromMonitorProcessing'), format('CanIncludeInClipboardHistory'), format('CanUploadToCloudClipboard')]
+            .every(f => put(f, zero));
+      } finally { close(); }
+    };
+  } catch (e) { copyPrivate = null; log('clipboard:', errorText(e)); }
+  return copyPrivate?.(text) ?? false;
+}
 // For people without an AI program, or past its limits: the request goes to the clipboard and their AI's chat site
 // opens (the one in the settings, else the model's); they paste it.
 async function handoff(req: Request, key: 'draftModel' | 'summaryModel') {
   if (settings.aiOff) throw new Error(t('toast.aiOff'));
   const text = `${req.system}\n\n${req.prompt}`;
-  await clipboard.writeText(text);
+  if (!privateCopy(text)) await clipboard.writeText(text);
   // the chat does not stay on the clipboard, where any program and any page allowed to read it find it.
-  // ponytail: Windows' clipboard history (Win+V) keeps its copy; excluding it takes a clipboard format Electron cannot add to the text
   setTimeout(() => void clipboard.readText().then(now => { if (now === text) clipboard.clear(); }), 5 * 60_000);
   await shell.openExternal(ai.WEB[settings.webChat] ?? ai.webOf(modelFor(key) || settings[key]) ?? ai.WEB.claude);
 }
