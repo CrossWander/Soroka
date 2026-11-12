@@ -290,6 +290,60 @@ export async function watchCall(onChange: (on: string) => void) {
     w.__tbCall.observe(document.body, { subtree: true, childList: true });
   }, [CALL, CALL_UI]);
 }
+
+// ---------- the compact view of a call: what the call window's page shows, and its buttons ----------
+// The call window's page is not the one this module is attached to: its scripts run through its own webContents.
+// Teams' meeting bar has no raise-hand button of its own (only its compact view has): it is in the reactions menu.
+// ponytail: on and off are told by Teams' labels in a ru/uk/en Teams (as call.html tells a video button), null in another;
+// the speaker by a "… говорит / is speaking" label and the people by Teams' avatars, both seen only in Teams' compact view:
+// in the full meeting view either may stay empty. The log line of popOutCall's first look says which were found.
+export type CallView = { mic: boolean | null; video: boolean | null; hand: boolean | null; count: number; speaker: string; people: string[]; probe: string };
+const CALL_SEL = { mic: `#microphone-button${OUT}`, video: `#video-button${OUT}`, hand: `#raisehands-button${OUT}`, react: `#reaction-menu-button${OUT}`,
+  roster: `#roster-button${OUT}`, msg: MSG };
+const runOn = (page: WebContents, fn: (arg: any) => unknown, arg: unknown): Promise<any> =>
+  within(page.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`, true), 5_000, 'a script in the call window');
+export const callView = (page: WebContents): Promise<CallView> => runOn(page, sel => {
+  const seen = (e: Element | null) => e && e.getClientRects().length ? e : null;
+  const label = (e: Element | null) => (e?.getAttribute('aria-label') ?? '').trim();
+  // "Включить микрофон" while it is off, "Отключить микрофон" while on (uk Увімкнути/Вимкнути, en Unmute/Mute, Turn … on/off)
+  const on = (e: Element | null) => !e ? null : /включить|увімкн|unmute|turn( \w+)? on\b/i.test(label(e)) ? false
+    : /отключить|выключить|вимкн|\bmute\b|turn( \w+)? off\b/i.test(label(e)) ? true : null;
+  const mic = seen(document.querySelector(sel.mic)), video = seen(document.querySelector(sel.video)), hand = seen(document.querySelector(sel.hand));
+  const roster = document.querySelector(sel.roster);
+  let speaker = '';
+  for (const e of document.querySelectorAll('[aria-label]')) {
+    const m = /^(.+?)[,.]?\s+(говорит|говорить|is speaking)$/i.exec(label(e));
+    if (m && seen(e) && !e.closest(sel.msg)) { speaker = m[1]; break; }
+  }
+  const people = new Map<string, string>(); // name → initials, as Teams shows them
+  for (const a of document.querySelectorAll('.fui-Avatar')) {
+    if (!seen(a) || a.closest(sel.msg)) continue;
+    const name = label(a) || a.querySelector('img')?.getAttribute('alt') || '';
+    const initials = a.querySelector('.fui-Avatar__initials')?.textContent?.trim()
+      || name.split(/\s+/).filter(w => /^\p{L}/u.test(w)).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+    if (name && initials && !people.has(name)) people.set(name, initials);
+  }
+  return { mic: on(mic), video: on(video), hand: hand ? /опуст|lower/i.test(label(hand)) : null, count: Number(/\d+/.exec(roster?.textContent ?? '')?.[0] ?? 0),
+    speaker, people: [...people.values()],
+    probe: `mic ${mic ? [...mic.attributes].map(a => a.name === 'data-state' ? `data-state=${a.value}` : a.name).join(' ') : 'none'}; video ${video ? 'yes' : 'none'}; `
+      + `hand ${hand ? 'in the bar' : document.querySelector(sel.react) ? 'in the reactions menu' : 'none'}; roster ${roster ? 'yes' : 'none'}` };
+}, CALL_SEL);
+// Presses Teams' own button: mic, video, hand (through the reactions menu when the bar has none), roster (opens the people
+// pane, never closes it). False when Teams has no such button.
+export const callPress = (page: WebContents, what: 'mic' | 'video' | 'hand' | 'roster'): Promise<boolean> => runOn(page, async ([what, sel]) => {
+  const seen = (s: string) => [...document.querySelectorAll(s)].find(e => e.getClientRects().length) as HTMLElement | undefined;
+  if (what !== 'hand') {
+    const b = seen(sel[what]);
+    if (b && !(what === 'roster' && b.getAttribute('aria-expanded') === 'true')) b.click();
+    return !!b;
+  }
+  let hand = seen(sel.hand);
+  const menu = hand ? undefined : seen(sel.react);
+  if (menu) { menu.click(); for (let i = 0; i < 20 && !(hand = seen(sel.hand)); i++) await new Promise(r => setTimeout(r, 100)); }
+  hand?.click();
+  if (menu?.getAttribute('aria-expanded') === 'true') menu.click(); // the menu it opened
+  return !!hand;
+}, [what, CALL_SEL]);
 // ---------- Jira: a ticket's status and name in the chat's messages ----------
 // In a message's text (not in link previews, not in the compose box):
 // - a link to <base>/browse/KEY gets data-tb-jira, which the app's style draws after the link;

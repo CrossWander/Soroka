@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Soroka</title>
+<style>
+  /* The call's compact view, as Teams' own: "open the call window" at the top, Teams' own buttons in the middle
+     (a crossed microphone or camera is off), and who speaks and who is in at the bottom. The window takes the page's size. */
+  :root { color-scheme: light dark; --card: #ffffff; --fg: #1d1d1b; --muted: #616161; --line: rgba(0,0,0,.12); --accent: #5b5fc7; --btn-hover: rgba(0,0,0,.07);
+    --no: #c4314b; --av: #e8e8f7; }
+  @media (prefers-color-scheme: dark) { :root { --card: #292929; --fg: #f3f3f3; --muted: #adadad; --line: rgba(255,255,255,.12); --accent: #7f85f5; --btn-hover: rgba(255,255,255,.08); --av: #3d3e66; } }
+  html, body { margin: 0; overflow: hidden; background: var(--card); color: var(--fg); user-select: none; font: 13px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  [hidden] { display: none !important; }
+  #box { width: max-content; min-width: 300px; max-width: 440px; box-sizing: border-box; border: 1px solid var(--line); app-region: drag; }
+  button { app-region: no-drag; border: 0; background: transparent; color: inherit; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+    font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  button:hover { background: var(--btn-hover); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  svg { width: 20px; height: 20px; flex: none; }
+  .top { display: flex; justify-content: flex-end; padding: 4px 6px 0; }
+  .top button { padding: 4px; }
+  .top svg { width: 16px; height: 16px; }
+  .bar { display: flex; justify-content: space-between; gap: 4px; padding: 2px 10px 8px; }
+  .bar button { padding: 7px 9px; }
+  .slash { display: none; }
+  .off .slash { display: inline; }
+  .on { background: var(--btn-hover); color: var(--accent); }
+  #leave { color: var(--no); }
+  #leave svg { transform: rotate(135deg); }
+  .strip { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); min-height: 26px; }
+  .dots { display: flex; gap: 2px; flex: none; }
+  .dots i { width: 4px; height: 8px; border-radius: 2px; background: var(--accent); }
+  #who { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  #who.muted { color: var(--muted); font-weight: 400; }
+  #people { display: flex; flex: none; }
+  .av { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 600; margin-left: -5px;
+    background: var(--av); color: var(--accent); border: 2px solid var(--card); }
+  .av.more { color: var(--fg); }
+</style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-expand" viewBox="0 0 24 24"><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5zm8 0h6v6h-2V8.4l-5.3 5.3-1.4-1.4L15.6 7H13V5z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7c0-.6-.4-1-1-1H4c-.6 0-1 .4-1 1v10c0 .6.4 1 1 1h12c.6 0 1-.4 1-1v-3.5l4 4v-11l-4 4z"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path fill="currentColor" d="M8 12V5.5a1.5 1.5 0 0 1 3 0V11h.5V3.5a1.5 1.5 0 0 1 3 0V11h.5V5a1.5 1.5 0 0 1 3 0v7h.5V8.5a1.5 1.5 0 0 1 3 0V15a7 7 0 0 1-7 7h-.6a6.5 6.5 0 0 1-5.4-2.9L4.3 15.4a1.5 1.5 0 0 1 2.4-1.8L8 15.3V12z"/></symbol>
+    <symbol id="i-people" viewBox="0 0 24 24"><path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></symbol>
+    <symbol id="i-call" viewBox="0 0 24 24"><path fill="currentColor" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></symbol>
+  </svg>
+  <div id="box">
+    <div class="top"><button data-act="expand" data-i18n-title="mini.expand" data-i18n-aria="mini.expand"><svg><use href="#i-expand"/></svg></button></div>
+    <div class="bar">
+      <button id="mic" data-act="mic" data-i18n-title="mini.mic" data-i18n-aria="mini.mic"><svg><use href="#i-mic"/><path class="slash" d="M3 3l18 18" stroke="currentColor" stroke-width="2"/></svg></button>
+      <button id="video" data-act="video" data-i18n-title="mini.video" data-i18n-aria="mini.video"><svg><use href="#i-video"/><path class="slash" d="M3 3l18 18" stroke="currentColor" stroke-width="2"/></svg></button>
+      <button id="hand" data-act="hand" data-i18n-title="mini.hand" data-i18n-aria="mini.hand"><svg><use href="#i-hand"/></svg></button>
+      <button data-act="roster" data-i18n-title="mini.people" data-i18n-aria="mini.people"><svg><use href="#i-people"/></svg><span id="count"></span></button>
+      <button id="leave" data-act="leave" data-i18n-title="mini.leave" data-i18n-aria="mini.leave"><svg><use href="#i-call"/></svg></button>
+    </div>
+    <div class="strip" id="strip">
+      <span class="dots" id="dots" hidden><i></i><i></i><i></i></span>
+      <span id="who"></span>
+      <span id="people"></span>
+    </div>
+  </div>
+<script src="i18n.js"></script>
+<script type="module">
+  // Names come from Teams: textContent and titles only.
+  await i18n;
+  const $ = id => document.getElementById(id);
+  for (const b of document.querySelectorAll('[data-act]')) b.onclick = () => bridge.invoke('mini:act', b.dataset.act).catch(() => {});
+  let size = '';
+  const fit = () => {
+    const r = $('box').getBoundingClientRect(), w = Math.ceil(r.width), h = Math.ceil(r.height);
+    if (`${w}x${h}` !== size) { size = `${w}x${h}`; void bridge.invoke('mini:size', w, h); }
+  };
+  const avatar = (text, more) => Object.assign(document.createElement('span'), { className: more ? 'av more' : 'av', textContent: text });
+  bridge.on('mini', v => {
+    $('mic').classList.toggle('off', v.mic === false); // null: not known, drawn as on
+    $('video').classList.toggle('off', v.video === false);
+    $('hand').classList.toggle('on', v.hand === true);
+    $('count').textContent = v.count ? String(v.count) : '';
+    $('dots').hidden = !v.speaker;
+    $('who').textContent = v.speaker || v.title; // nobody seen speaking: the meeting's name
+    $('who').classList.toggle('muted', !v.speaker);
+    $('strip').title = v.speaker ? t('mini.speaking', { name: v.speaker }) : v.title;
+    const shown = v.people.slice(0, 4), more = Math.max(0, v.count - 1 - shown.length); // Teams' "+N": the others not shown, not you
+    $('people').replaceChildren(...shown.map(i => avatar(i)), ...(more ? [avatar(`+${more}`, true)] : []));
+    fit();
+  });
+  fit(); // shown at once, filled when the call's page answers
+</script>
+</body>
+</html>

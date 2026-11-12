@@ -43,6 +43,7 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 **Calls**
 - An incoming call or a started meeting shows a card at the top right with Teams' own buttons.
 - A call opens in its own window, as in the Teams app. Screen sharing has a picker of screens and windows.
+- Minimize the call window and a small one stays on top, as Teams' compact view: microphone, camera, hand, people and leave, who is speaking and how many are in. Like Teams, both windows stay out of screenshots.
 
 **Jira** (Server / Data Center)
 - Ticket keys and links in chats and cards show the ticket's status and name.

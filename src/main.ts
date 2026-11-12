@@ -148,7 +148,8 @@ const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string
   asked: {} as Record<string, { title: string; text: string; at: number; told?: boolean }>, // asked: per chat, the user's own question still unanswered
   checkWarned: '', // checkWarned: "version|missing parts" the self-check last warned about
   toolsOk: [] as string[], // toolsOk: the AIs with tools of their own the user let read chats
-  callBounds: null as Electron.Rectangle | null }); // callBounds: where the user left the call window
+  callBounds: null as Electron.Rectangle | null, // callBounds: where the user left the call window
+  miniAt: null as { x: number; y: number } | null }); // miniAt: where the user left the call's compact view
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
 ai.usage.onSpent = tokens => {
@@ -1294,11 +1295,60 @@ function popOutCall(what: string) {
     void page.executeJavaScript(`document.querySelector(${JSON.stringify(teams.LEAVE)})?.click()`).catch(() => {}) // "Leave", seen in a live call
       .finally(() => setTimeout(() => page.close(), 1000));
   });
-  win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } });
+  win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } miniWin?.close(); });
+  // as Teams' own: out of screenshots and of a shared screen, a red dot on the taskbar button, the compact view while minimized
+  win.setContentProtection(true);
+  win.setOverlayIcon(CALL_DOT, t('call.on'));
+  win.on('minimize', showMini);
+  win.on('restore', () => miniWin?.close());
   win.show();
   newTeamsPage();
   void serial(() => connect(false)).catch(e => log('call: chats page:', errorText(e)));
 }
+const CALL_DOT = (() => { // Teams' red (#c4314b) in BGRA, its edge smoothed
+  const s = 16, px = Buffer.alloc(s * s * 4);
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const a = Math.max(0, Math.min(1, s / 2 - 0.5 - Math.hypot(x + 0.5 - s / 2, y + 0.5 - s / 2)));
+    px.set([0x4b * a, 0x31 * a, 0xc4 * a, 255 * a], (y * s + x) * 4); // premultiplied, as Windows takes it
+  }
+  return nativeImage.createFromBitmap(px, { width: s, height: s });
+})();
+
+// ---------- the compact view of a call, as Teams' own ----------
+// While the call window is minimized: a small window above the others, gone when the call window comes back. Who speaks and
+// who is in, and Teams' own microphone, camera, hand, people and leave buttons. A button of its own on the taskbar.
+let miniWin: BrowserWindow | null = null;
+function showMini() {
+  if (miniWin || !callPage) return;
+  const page = callPage;
+  const title = () => page.getTitle().replace(/^\(\d+\)\s*/, '').replace(/\s*\|\s*Microsoft Teams\s*$/i, '');
+  const win = miniWin = new BrowserWindow({ width: 340, height: 116, show: false, frame: false, resizable: false, maximizable: false, minimizable: false,
+    fullscreenable: false, alwaysOnTop: true, icon: APP_ICON, title: `${t('call.mini')} | ${title()}`, webPreferences: { preload } });
+  win.setContentProtection(true);
+  win.setOverlayIcon(CALL_DOT, t('call.on'));
+  win.on('page-title-updated', e => e.preventDefault()); // the taskbar names the call, not the page
+  win.loadFile(ui('mini.html'));
+  let first = true;
+  const look = () => void teams.callView(page).then(v => {
+    if (first) { first = false; log(`call: compact view: speaker ${v.speaker ? 'found' : 'none'}, people ${v.people.length}, count ${v.count}; ${v.probe}`); }
+    if (!win.isDestroyed()) win.webContents.send('mini', { ...v, probe: undefined, title: title() });
+  }, () => {});
+  win.webContents.on('did-finish-load', look);
+  const timer = setInterval(look, 1000);
+  win.on('moved', () => { const [x, y] = win.getPosition(); state.miniAt = { x, y }; saveState(); });
+  win.on('closed', () => { clearInterval(timer); if (miniWin === win) miniWin = null; });
+}
+// The page's width: where the user left it, its right edge kept; the first time at the top right of the call's screen
+handle('mini:size', (e, width: number, height: number) => {
+  if (!miniWin || e.sender !== miniWin.webContents) return;
+  const size = { width: Math.ceil(width), height: Math.ceil(height) };
+  if (miniWin.isVisible()) { const b = miniWin.getBounds(); return miniWin.setBounds({ ...size, x: b.x + b.width - size.width, y: b.y }); }
+  const at = state.miniAt, wa = screen.getDisplayNearestPoint(at ?? screen.getCursorScreenPoint()).workArea;
+  const seen = at && at.x >= wa.x && at.x < wa.x + wa.width && at.y >= wa.y && at.y < wa.y + wa.height;
+  const top = callWin ? screen.getDisplayMatching(callWin.getNormalBounds()).workArea : wa;
+  miniWin.setBounds({ ...size, ...(seen ? at : { x: top.x + top.width - size.width - 16, y: top.y + 16 }) });
+  miniWin.showInactive();
+});
 
 // ---------- sharing a screen or a window in a call ----------
 // Teams asks with getDisplayMedia; Electron has no picker of its own on Windows, so a small window lists the screens and
@@ -1597,6 +1647,12 @@ handle('draft:send', logged('send', (_e, n: string, text: string, quote: unknown
 handle('react:open', (_e, n: string) => showReactions(String(n)));
 handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
 handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
+handle('mini:act', logged('compact view', async (e, what: string) => {
+  if (!miniWin || e.sender !== miniWin.webContents || !callWin || !callPage) return;
+  if (what === 'leave') return callWin.close(); // as closing the call window: Teams' "Leave", then the page goes
+  if (what === 'expand' || what === 'roster') { callWin.restore(); callWin.focus(); }
+  if (what === 'mic' || what === 'video' || what === 'hand' || what === 'roster') await teams.callPress(callPage, what);
+}));
 handle('react:get', (_e, n: string) => ({ title: state.drafts[String(n)]?.title ?? '', recent: state.reactions }));
 handle('react:pick', logged('react', (_e, n: string, id: string, tab: number, quiet: unknown) => {
   if (!/^[\w-]{1,80}$/.test(String(id)) || !Number.isInteger(tab) || tab < 1 || tab > 9) throw new Error('bad reaction');
