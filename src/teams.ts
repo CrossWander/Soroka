@@ -198,12 +198,18 @@ export async function watchChats(onChange: () => void) {
   }, BINDING);
 }
 
+// Teams' own parts, never the inside of a message: a card or formatted text in a message might carry an id or a data-tid
+// that looks like one of them (not seen; nothing known keeps a message's markup from bringing one).
+const MSG = '[data-tid="chat-pane-message"]';
+const OUT = `:not(${MSG} *)`;
+
 // ---------- calls: an incoming call, or a meeting that started, as Teams shows it in its page ----------
 // Teams' toast for them has a decline button with a fixed id (reject-call-button / reject-meeting-button); the toast's
 // other buttons (accept with video or audio, join) are taken as they are, with Teams' own labels, and numbered for ringClick.
 // title/message: the toast's text lines that are not button labels (the caller first). outline: its data-tid ids, for the log.
 export type Ring = { kind: 'call' | 'meeting'; title: string; message: string; buttons: { label: string; reject: boolean }[]; outline: string };
 const RING = 'tbRing';
+const REJECT = `[data-tid="reject-call-button"]${OUT}, [data-tid="reject-meeting-button"]${OUT}`;
 export async function watchRings(onChange: (ring: Ring | null) => void) {
   await bind(RING, payload => {
     const r = payload ? JSON.parse(payload) : null;
@@ -211,11 +217,11 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
     if (Array.isArray(r.buttons)) onChange({ kind: r.kind === 'call' ? 'call' : 'meeting', title: String(r.title ?? ''), message: String(r.message ?? ''),
       buttons: r.buttons.map((b: { label?: unknown; reject?: unknown }) => ({ label: String(b?.label ?? ''), reject: b?.reject === true })), outline: String(r.outline ?? '') });
   });
-  await run(name => {
+  await run(([name, rejectSel]) => {
     const w = window as any;
     w.__tbRing?.disconnect();
     const read = () => {
-      const reject = document.querySelector('[data-tid="reject-call-button"], [data-tid="reject-meeting-button"]') as HTMLElement | null;
+      const reject = document.querySelector(rejectSel) as HTMLElement | null;
       if (!reject?.getClientRects().length) return '';
       // the text of an element outside its buttons, a line per text node (the caller's name, "Video call")
       const texts = (e: Element) => {
@@ -242,12 +248,12 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
       timer = window.setTimeout(() => { timer = 0; const now = read(); if (now !== last) { last = now; w[name]?.(now); } }, 300);
     });
     w.__tbRing.observe(document.body, { subtree: true, childList: true });
-  }, RING);
+  }, [RING, REJECT]);
 }
 // A button of the ringing toast, by its number in Ring.buttons: a real click, so the veil of a summary reading goes first.
 export async function ringClick(i: number) {
   if (veiling) { await veiling.page.removeInsertedCSS(veiling.key).catch(() => {}); veiling = null; }
-  await click(`[data-tb-ring="${i}"]`);
+  await click(`[data-tb-ring="${i}"]${OUT}`); // a message could carry one too
 }
 // "Join" after Teams' own meeting toast is gone: the meeting chat named in the toast, and its Join button.
 // The longest title in it: a meeting named with a part of another's title ("Daily") does not take its place.
@@ -255,14 +261,11 @@ export async function joinMeeting(text: string) {
   const c = (await chatList()).filter(x => x.type === 'meeting' && x.title && text.includes(x.title)).sort((a, b) => b.title.length - a.title.length)[0];
   if (!c) return false;
   await openChat(c);
-  if (!(await exists('[data-tid="chat-join-button"]', 3000))) return false;
-  await click('[data-tid="chat-join-button"]');
+  const join = `[data-tid="chat-join-button"]${OUT}`; // the chat header's, not a button-like thing in a message
+  if (!(await exists(join, 3000))) return false;
+  await click(join);
   return true;
 }
-// Teams' own parts, never the inside of a message: a card or formatted text in a message might carry an id or a data-tid
-// that looks like one of them (not seen; nothing known keeps a message's markup from bringing one).
-const MSG = '[data-tid="chat-pane-message"]';
-const OUT = `:not(${MSG} *)`;
 // A call or meeting in progress: its hang-up button ("Leave" is #hangup-button in a live call; the compact view's one not seen yet)
 export const HANGUP = `[data-tid*="hangup" i]${OUT}, [id*="hangup" i]${OUT}`;
 export const LEAVE = `#hangup-button${OUT}`;
