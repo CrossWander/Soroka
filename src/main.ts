@@ -149,7 +149,8 @@ const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string
   checkWarned: '', // checkWarned: "version|missing parts" the self-check last warned about
   toolsOk: [] as string[], // toolsOk: the AIs with tools of their own the user let read chats
   callBounds: null as Electron.Rectangle | null, // callBounds: where the user left the call window
-  miniAt: null as { x: number; y: number } | null }); // miniAt: where the user left the call's compact view
+  miniAt: null as { x: number; y: number } | null, // miniAt: where the user left the call's compact view
+  miniMode: '' }); // miniMode: 'bar' when the user folded the compact view to its buttons
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
 ai.usage.onSpent = tokens => {
@@ -1274,6 +1275,7 @@ function onCall(on: string) { // either page may report: the main one a call sta
 }
 function popOutCall(what: string) {
   log(`call: to its own window (${what})`);
+  callSince = Date.now();
   const view = teamsView;
   closeSettings();
   teamsWin.contentView.removeChildView(view);
@@ -1316,14 +1318,17 @@ const CALL_DOT = (() => { // Teams' red (#c4314b) in BGRA, its edge smoothed
 
 // ---------- the compact view of a call, as Teams' own ----------
 // While the call window is minimized: a small window above the others, gone when the call window comes back. Who speaks and
-// who is in, and Teams' own microphone, camera, hand, people and leave buttons. A button of its own on the taskbar.
+// who is in, how long the call goes (since its window opened), and Teams' own microphone, camera, hand, people and leave
+// buttons; folded, the buttons alone (state.miniMode, kept for the next call). A button of its own on the taskbar.
 let miniWin: BrowserWindow | null = null;
+let callSince = 0;
 function showMini() {
   if (miniWin || !callPage) return;
   const page = callPage;
   const title = () => page.getTitle().replace(/^\(\d+\)\s*/, '').replace(/\s*\|\s*Microsoft Teams\s*$/i, '');
-  const win = miniWin = new BrowserWindow({ width: 340, height: 116, show: false, frame: false, resizable: false, maximizable: false, minimizable: false,
-    fullscreenable: false, alwaysOnTop: true, icon: APP_ICON, title: `${t('call.mini')} | ${title()}`, webPreferences: { preload } });
+  // transparent like the app's cards: the page draws the card with its shadow and asks for its size (mini:size)
+  const win = miniWin = new BrowserWindow({ width: 360, height: 160, show: false, frame: false, transparent: true, hasShadow: false, resizable: false,
+    maximizable: false, minimizable: false, fullscreenable: false, alwaysOnTop: true, icon: APP_ICON, title: `${t('call.mini')} | ${title()}`, webPreferences: { preload } });
   win.setContentProtection(true);
   win.setOverlayIcon(CALL_DOT, t('call.on'));
   win.on('page-title-updated', e => e.preventDefault()); // the taskbar names the call, not the page
@@ -1331,7 +1336,7 @@ function showMini() {
   let first = true;
   const look = () => void teams.callView(page).then(v => {
     if (first) { first = false; log(`call: compact view: speaker ${v.speaker ? 'found' : 'none'}, people ${v.people.length}, count ${v.count}; ${v.probe}`); }
-    if (!win.isDestroyed()) win.webContents.send('mini', { ...v, probe: undefined, title: title() });
+    if (!win.isDestroyed()) win.webContents.send('mini', { ...v, probe: undefined, title: title(), since: callSince, folded: state.miniMode === 'bar' });
   }, () => {});
   win.webContents.on('did-finish-load', look);
   const timer = setInterval(look, 1000);
@@ -1649,6 +1654,7 @@ handle('ring:click', logged('ring', (_e, i: number) => ringAction(Number(i))));
 handle('ring:dismiss', () => { if (ring?.live) ringHidden = ring.title; closeRing(); });
 handle('mini:act', logged('compact view', async (e, what: string) => {
   if (!miniWin || e.sender !== miniWin.webContents || !callWin || !callPage) return;
+  if (what === 'fold' || what === 'unfold') { state.miniMode = what === 'fold' ? 'bar' : ''; return saveState(); } // the page folds itself
   if (what === 'leave') return callWin.close(); // as closing the call window: Teams' "Leave", then the page goes
   if (what === 'expand' || what === 'roster') { callWin.restore(); callWin.focus(); }
   if (what === 'mic' || what === 'video' || what === 'hand' || what === 'roster') await teams.callPress(callPage, what);
