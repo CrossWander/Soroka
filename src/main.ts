@@ -505,8 +505,36 @@ const watch = () => Promise.all([
   teams.watchChats(() => { log('unread chats changed'); void tick(); }), // the timer still checks if this fails
   teams.watchRings(onRing),
   teams.watchCall(onCall),
+  teams.watchSignIn(signIn),
   jiraLinks(),
 ]).catch(e => log('watch:', errorText(e)));
+// Teams asks to sign in again and its "Sign in" does nothing here (teams.watchSignIn): Microsoft's account page opens in
+// Teams' session, hidden, and comes up when Microsoft asks for the sign-in. Back on the account page and staying there
+// (the page itself goes to the sign-in first, when one is due) the user is signed in: the window closes and the chats
+// reload, so Teams signs in quietly again. A call's page is left as it is: reloading it would drop the call.
+let signInWin: BrowserWindow | null = null;
+function signIn() {
+  if (signInWin) return signInWin.show();
+  log('sign-in: Teams asks to sign in again');
+  const win = signInWin = new BrowserWindow({ ...PLAIN, width: 520, height: 680, show: false, webPreferences: { session: session.fromPartition('persist:teams') } });
+  const ACCOUNT = /^https:\/\/myaccount\.microsoft\.com\//;
+  let asked = false, done: NodeJS.Timeout | undefined;
+  win.webContents.on('did-navigate', (_e, url) => {
+    clearTimeout(done);
+    if (!ACCOUNT.test(url)) { if (!asked) { asked = true; win.show(); } return; } // Microsoft's sign-in, or the organization's own
+    const settle = () => {
+      if (win.webContents.isLoading()) { done = setTimeout(settle, 2000); return; }
+      log(`sign-in: ${asked ? 'signed in again' : 'Microsoft did not ask'}`);
+      win.close();
+      if (asked) teamsPage.reload();
+    };
+    done = setTimeout(settle, 8000);
+  });
+  win.on('closed', () => { clearTimeout(done); if (signInWin === win) signInWin = null; });
+  win.loadURL('https://myaccount.microsoft.com/').catch(e => { // ERR_ABORTED: the page went on to the sign-in
+    if ((e as { code?: string }).code !== 'ERR_ABORTED') { log('sign-in:', errorText(e)); win.close(); }
+  });
+}
 // One click on the tray icon: the Teams window, as in the Teams app.
 function showTeams() {
   closeSettings(); // every way here (the tray, a toast, a sign-in, "Open" in the settings) wants the Teams page itself

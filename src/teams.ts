@@ -291,6 +291,25 @@ export async function watchCall(onChange: (on: string) => void) {
   }, [CALL, CALL_UI]);
 }
 
+// ---------- Teams asking to sign in again ----------
+// Its banner ("Sign in again… a request from your IT department or Teams") has a Sign in button that here only retries
+// Teams' quiet sign-in in the page, which Microsoft refuses when it wants the password again: nothing happens. Told at
+// that button's click, so the app opens Microsoft's sign-in itself.
+// ponytail: the button is told by its label in a ru/uk/en Teams (outside messages); another language: the banner as it is.
+const SIGNIN = 'tbSignIn';
+export async function watchSignIn(onClick: () => void) {
+  await bind(SIGNIN, () => onClick());
+  await run(([name, msg]) => {
+    const w = window as any;
+    if (w.__tbSignIn) document.removeEventListener('click', w.__tbSignIn, true);
+    w.__tbSignIn = (e: Event) => {
+      const b = (e.target as Element | null)?.closest?.('button') as HTMLElement | null;
+      if (b && !b.closest(msg) && /^(войти|увійти|sign in)$/i.test(b.innerText.trim())) w[name]?.('');
+    };
+    document.addEventListener('click', w.__tbSignIn, true);
+  }, [SIGNIN, MSG]);
+}
+
 // ---------- the compact view of a call: what the call window's page shows, and its buttons ----------
 // The call window's page is not the one this module is attached to: its scripts run through its own webContents.
 // Teams' meeting bar has no raise-hand button of its own (only its compact view has): it is in the reactions menu.
