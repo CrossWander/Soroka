@@ -12,7 +12,7 @@ type ChatRef = Pick<Chat, 'id' | 'title'>;
 export const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // Teams may render emoji as images, so text checks compare without them.
-const plain = (t: string) => t.replace(/[\p{Extended_Pictographic}️​-‍⁠﻿]/gu, '').replace(/\s+/g, ' ').trim();
+export const plain = (t: string) => t.replace(/[\p{Extended_Pictographic}️​-‍⁠﻿]/gu, '').replace(/\s+/g, ' ').trim();
 
 // Teams' own pages: the app talks to these only.
 export const TEAMS_PAGE = /^https:\/\/([\w-]+\.)*(teams\.cloud\.microsoft|teams\.microsoft\.com|teams\.live\.com)\//;

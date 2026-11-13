@@ -119,9 +119,9 @@
   // Texts come from Teams: textContent only.
   const $ = id => document.getElementById(id);
   const card = $('card');
-  let life = 4000, timer, leaving, n = null, replying = false, variants = [], next = 0, keys = false, sending = false, idle;
-  // life 0: a question to the user, the card waits for the answer
-  const arm = () => { clearTimeout(timer); if (!replying && life) timer = setTimeout(leave, life); };
+  let life = 4000, timer, leaving, n = null, replying = false, variants = [], next = 0, keys = false, sending = false, idle, waiting = false;
+  // life 0: a question to the user, the card waits for the answer; waiting: for what the user asked in it (whole texts, in brief)
+  const arm = () => { clearTimeout(timer); if (!replying && !waiting && life) timer = setTimeout(leave, life); };
   // A card left with the reply field open: after 2 minutes without a key, what is typed waits in "Replies" and the card goes,
   // so the cards after it come.
   const stillHere = () => { clearTimeout(idle); if (replying) idle = setTimeout(() => { const v = $('field').value.trim(); if (v) bridge.invoke('draft:keep', n, v); leave(); }, 120_000); };
@@ -137,16 +137,18 @@
   const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button, #brief')) b.disabled = on; };
   // A chat's card gathers its messages as they come (one person's in a row as one run, the author over it in a group);
-  // a single whole message of a direct chat stays the plain text it always was. fresh: how many at the end just came.
+  // a single short whole message of a direct chat stays the plain text it always was (a long one would lose its end there).
+  // fresh: how many at the end just came.
   // From 4 messages "In brief" offers the AI's few lines instead (briefOk: not for a chat kept from the AI).
   // all: the user opened the earlier ones too ("↑ N earlier"); a new card starts with the last 3.
   let briefOk = false, msgsNow = [], all = false, key = null; // key: the card's draft n, or its channel's stack
-  const cut = m => m.text.endsWith('…');
+  const cut = m => m.text.length >= 50 && m.text.endsWith('…'); // as main.ts: a short one ending with "…" is whole
   function showMsgs(msgs, fresh = 0) {
     msgsNow = msgs;
-    const many = msgs.length > 1 || !!msgs[0]?.who || (msgs.length === 1 && cut(msgs[0]));
+    const many = msgs.length > 1 || !!msgs[0]?.who || (msgs.length === 1 && (cut(msgs[0]) || msgs[0].text.length > 100));
     $('talk').hidden = !many; $('message').hidden = many; $('sum').hidden = true;
     $('brief').hidden = !(briefOk && msgs.length >= 4);
+    $('brief').title = msgs.some(cut) ? t('card.briefRead') : ''; // the cut ones are read whole first
     $('sub').textContent = msgs.length > 1 ? plural(msgs.length) : '';
     $('subline').hidden = msgs.length < 2;
     if (!many) return;
@@ -183,27 +185,28 @@
     for (let i = Math.max(0, bubbles.length - fresh); i < bubbles.length; i++) bubbles[i].classList.add('fresh');
     $('talk').scrollTop = $('talk').scrollHeight; // the newest in view
   }
-  // the whole texts of the messages Teams cut, from the chat itself (the user clicked: the chat gets read)
-  async function whole() {
-    clearTimeout(timer); busy(true); say(t('card.reading'));
-    try { showMsgs(await bridge.invoke('draft:whole', n)); await say(''); }
-    catch (err) { say(failed(err), true); }
-    finally { busy(false); }
+  // What the user asked in the card and waits for: one at a time, and the card stays meanwhile (the mouse may leave it).
+  // A card closed meanwhile, with the next one in this window, does not take the answer.
+  async function request(label, ask, show) {
+    if (waiting) return;
+    const mine = key;
+    waiting = true; clearTimeout(timer); busy(true); say(t(label));
+    try { const r = await ask(); if (key === mine) { show(r); await say(''); } }
+    catch (err) { if (key === mine) say(failed(err), true); }
+    finally { waiting = false; busy(false); if (key === mine && !card.matches(':hover')) arm(); }
   }
-  $('brief').onclick = async e => {
+  // the whole texts of the messages Teams cut, from the chat itself (the user clicked: the chat gets read)
+  const whole = () => request('card.reading', () => bridge.invoke('draft:whole', n), showMsgs);
+  $('brief').onclick = e => {
     e.stopPropagation();
-    clearTimeout(timer); busy(true); say(t('card.briefing'));
-    try {
-      const r = await bridge.invoke('draft:brief', n);
+    request('card.briefing', () => bridge.invoke('draft:brief', n), r => {
       showMsgs(r.msgs); // whole now, for "Show them all"
       $('sum-head').textContent = t('card.briefHead', { count: plural(r.msgs.length) });
       $('sum-text').textContent = r.text;
       $('sum').hidden = false; $('talk').hidden = true; $('brief').hidden = true;
-      await say('');
-    } catch (err) { say(failed(err), true); }
-    finally { busy(false); }
+    });
   };
-  $('show-all').onclick = e => { e.stopPropagation(); showMsgs(msgsNow); fit(); };
+  $('show-all').onclick = e => { e.stopPropagation(); all = true; showMsgs(msgsNow); fit(); };
   $('sum').onclick = e => e.stopPropagation(); // reading it is not "open the chat"
 
   bridge.on('toast', async t => {
