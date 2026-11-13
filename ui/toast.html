@@ -135,7 +135,8 @@
   const arm = () => { clearTimeout(timer); if (!replying && !waiting && life) timer = setTimeout(leave, life); };
   // A card left with the reply field open: after 2 minutes without a key, what is typed waits in "Replies" and the card goes,
   // so the cards after it come.
-  const stillHere = () => { clearTimeout(idle); if (replying) idle = setTimeout(() => { const v = $('field').value.trim(); if (v) bridge.invoke('draft:keep', n, v); leave(); }, 120_000); };
+  // Not while the user waits on what they asked in the card: it holds the card (request()).
+  const stillHere = () => { clearTimeout(idle); if (replying) idle = setTimeout(() => { if (waiting) return stillHere(); const v = $('field').value.trim(); if (v) bridge.invoke('draft:keep', n, v); leave(); }, 120_000); };
   function leave() {
     clearTimeout(timer);
     card.classList.add('leaving'); card.classList.remove('shown');
@@ -238,8 +239,10 @@
       $('sum-head').textContent = t('card.answerHead');
       $('sum-text').textContent = r.text;
       $('sum').hidden = false; $('talk').hidden = true; $('continue').hidden = false; $('ask-field').value = '';
+      stillHere(); // two minutes to read it
     });
   }
+  $('ask-field').oninput = stillHere; // typing the question: the card stays
   $('ask-send').onclick = e => { e.stopPropagation(); ask(); };
   $('ask-field').onkeydown = e => { if (e.key === 'Enter') ask(); };
   $('askbox').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"

@@ -422,7 +422,7 @@ const S: Record<string, [string, string, string]> = {
   'set.agent': ['Агент', 'Agent', 'Агент'],
   'set.agentNote': ['Куди «Розібрати в агенті» передає переписку картки', 'Where “Look into it in the agent” hands a card’s chat', 'Куда «Разобрать в агенте» передаёт переписку карточки'],
   'set.agentNone': ['Агентів не знайдено: потрібен Claude Code, Codex, Gemini CLI, Cursor або VS Code з Claude Code чи Copilot', 'No agents found: needs Claude Code, Codex, Gemini CLI, Cursor, or VS Code with Claude Code or Copilot', 'Агентов не найдено: нужен Claude Code, Codex, Gemini CLI, Cursor или VS Code с Claude Code или Copilot'],
-  'set.agentOff': ['не обрано', 'none', 'не выбран'],
+  'set.agentOff': ['сам — той, що підставляє запит', 'automatic — one that fills in the request', 'сам — тот, что подставляет запрос'],
   'set.agentNow': ['надсилає одразу', 'sends at once', 'отправляет сразу'],
   'set.agentFill': ['підставляє запит', 'fills in the request', 'подставляет запрос'],
   'set.projectDir': ['Папка проєктів', 'Projects folder', 'Папка проектов'],

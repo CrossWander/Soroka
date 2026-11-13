@@ -30,9 +30,10 @@ export function detectAgents(): Agent[] {
   return all.filter(a => a[3]).map(([id, name, now]) => ({ id, name, now }));
 }
 
-// The terminal agents and their cautious mode: they start on the request at once.
+// The terminal agents and their cautious mode: they start on the request at once. Claude Code plans: it only reads until the
+// user approves the plan — the user's allow rules would let it act unasked in "default".
 const TERMINAL: Partial<Record<AgentId, [string, string[]]>> = {
-  'claude-terminal': ['claude', ['--permission-mode', 'default']],
+  'claude-terminal': ['claude', ['--permission-mode', 'plan']],
   codex: ['codex', ['--sandbox', 'read-only', '-a', 'on-request']],
   gemini: ['gemini', ['--approval-mode', 'default', '-i']],
 };

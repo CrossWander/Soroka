@@ -1336,7 +1336,7 @@ function announce(n: string, why?: string) {
   toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => openInTeams(d.chatId),
     hint: why ?? (d.error ? t('toast.replyFailed') : ready ? t('toast.replyReady') : undefined),
     reply: { n, variants: d.variants ?? [], ai: aiReady(), quick: quickReplies(), msgs, brief: aiReady() && !aiSkipped(d.title),
-      agent: !settings.aiOff && agents.detectAgents().length > 0, marks: marksOf(msgs) },
+      agent: !settings.aiOff && !!pickAgent(), marks: marksOf(msgs) },
     actions: [{ label: `📝 ${t('act.summary')}`, run: () => showSummary(d.chatId) }] });
 }
 // ---------- calls and meetings ----------
@@ -1749,7 +1749,7 @@ async function checkActivity() {
       .then(name => toast({ title: t('card.agentDone', { name }), message: a.where }), e => toast({ title: a.where, message: errorText(e), tone: 'error' }));
     toast({ title: a.where, message: a.text, tone: 'accent', long: true, stack: { key, msgs: card.msgs }, click: () => openActivity(card.id),
       actions: [{ label: t('act.openTeams'), run: () => openActivity(card.id) },
-        ...(!settings.aiOff && agents.detectAgents().length ? [{ label: t('card.agent'), run: toTheAgent }] : [])] });
+        ...(!settings.aiOff && pickAgent() ? [{ label: t('card.agent'), run: toTheAgent }] : [])] });
   }
   state.activitySeen.splice(200);
   saveState();
@@ -1895,10 +1895,13 @@ handle('draft:continue', (_e, n: string, talk: unknown) => {
 // short request to read it. "Not to AI" holds as everywhere the AI reads. Returns the agent's name.
 // A channel's card has no chat to read: its messages go as they are.
 type AgentSource = { chatId: string; title: string; period: string; question?: string; history?: Talk[] } | { title: string; msgs: Msg[] };
+// The agent chosen in the settings; none chosen (or it is gone): the first one that only fills the request in — one that sends
+// at once only when the user chose it
+const pickAgent = () => { const found = agents.detectAgents(); return found.find(a => a.id === settings.agent) ?? found.find(a => !a.now); };
 const PICTURE: Record<string, string> = { 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' };
 async function toAgent(src: AgentSource): Promise<string> {
   if (settings.aiOff) throw new Error(t('toast.aiOff'));
-  const found = agents.detectAgents(), agent = found.find(a => a.id === settings.agent) ?? found[0];
+  const agent = pickAgent();
   if (!agent) throw new Error(t('err.noAgent'));
   notToAi(src.title);
   let dir = settings.projectDir;
@@ -1918,7 +1921,8 @@ async function toAgent(src: AgentSource): Promise<string> {
       const msgs = forAi(gap ? byQuestion(all, gap) : all);
       return { msgs, data: await teams.imageData(msgs.flatMap(m => m.images ?? [])) }; // while the chat is open: the pictures are its page's
     }));
-    lines = msgs.map(m => ({ author: m.author || (m.mine ? 'Me' : 'Other'), mine: m.mine, time: when(m.id), text: m.text,
+    // "Me" for the user's own: Teams lends an own message the author of the one before it
+    lines = msgs.map(m => ({ author: m.mine ? 'Me' : m.author || 'Other', mine: m.mine, time: when(m.id), text: m.text,
       images: (m.images ?? []).map(() => { // '' for one Teams did not give
         const d = data.shift();
         if (!d) return '';

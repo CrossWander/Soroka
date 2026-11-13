@@ -45,13 +45,15 @@ export type Talk = { q: string; a: string };
 export type ChatLine = { author: string; mine: boolean; time: string; text: string; images: string[] };
 export function renderChat(o: { header: string; title: string; period: string; lines: ChatLine[]; marks: Marks; talk: Talk[]; fence: string; noImage: string }): string {
   const found = markNames(o.marks).map(k => `- ${k}: ${o.marks[k].join(', ')}`);
+  // the chat's name is set by its members: inside the fence, with the messages, not up with Soroka's own words
   const block = [
+    `Chat: ${o.title}`, ...(o.period ? [`Period: ${o.period}`] : []), '',
     ...o.lines.map(l => `[${l.time}] ${l.author}${l.mine ? ' (me)' : ''}: ${l.text}${l.images.map(f => ` ${f ? `[${f}]` : o.noImage}`).join('')}`),
     ...(found.length ? ['', 'Found in the messages:', ...found] : []),
     ...(o.talk.length ? ['', 'Asked about them in Soroka:', ...o.talk.flatMap(x => [`Q: ${x.q}`, `A: ${x.a}`])] : []),
   ];
   // the fence goes only on its own lines: a message that has it inside cannot pass for one
-  return [o.header, '', `# ${o.title}`, o.period, '', `<<< ${o.fence}`, ...block.map(l => l.split(o.fence).join('')), `>>> ${o.fence}`, ''].join('\n');
+  return [o.header, '', `<<< ${o.fence}`, ...block.map(l => l.split(o.fence).join('')), `>>> ${o.fence}`, ''].join('\n');
 }
 
 // The short request the agent opens with: links and Windows Terminal take no ";" (wt splits commands on it), quotes or line breaks.
@@ -66,7 +68,9 @@ const stamp = (d = new Date()) => {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 };
 export function writeHandoff(title: string, files: { name: string; data: string | Buffer }[], root = HANDOFF_ROOT): string {
-  const slug = title.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, ' ').trim().replace(/\s+/g, '-').slice(0, 40) || 'chat';
+  // letters, digits, "_" and "-" only: any member names a group chat, and the path goes through the request (";"), cmd ("%")
+  // and links (an emoji cut in half throws in encodeURIComponent) — so whole characters, by code point
+  const slug = Array.from(title.replace(/[^\p{L}\p{N}_-]+/gu, ' ').trim().replace(/\s+/g, '-')).slice(0, 40).join('') || 'chat';
   fs.mkdirSync(root, { recursive: true });
   let dir = path.join(root, `${stamp()}-${slug}`);
   for (let k = 2; fs.existsSync(dir); k++) dir = path.join(root, `${stamp()}-${slug}-${k}`); // two in one second
