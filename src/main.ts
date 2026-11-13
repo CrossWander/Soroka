@@ -1750,7 +1750,9 @@ async function sendDraft(n: string, text: string, quote = false) {
     delete d.error; delete d.context; delete d.msgs;
     toast({ title: t('toast.sent'), message: `${d.title}: ${text}` });
   } catch (e) {
-    const err = (e as { boxTaken?: boolean }).boxTaken ? new Error(t('err.boxTaken')) : e; // the user's own words wait there: in their language
+    // the user's own words wait in this app's Teams window, not the Teams app they look at: the window opens on them
+    const taken = !!(e as { boxTaken?: boolean }).boxTaken, err = taken ? new Error(t('err.boxTaken')) : e;
+    if (taken) openInTeams(d.chatId);
     d.error = errorText(err);
     toast({ title: t('toast.notSent'), message: `${d.title}: ${d.error}`, tone: 'error', long: true, click: () => showDrafts(true) });
     throw err;

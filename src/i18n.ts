@@ -156,7 +156,7 @@ const S: Record<string, [string, string, string]> = {
   'err.aiTools': ['{name} ще не може читати чати: дозвольте це в сповіщенні й спробуйте знову', '{name} may not read chats yet: allow it in the notification and try again', '{name} пока не может читать чаты: разрешите это в уведомлении и попробуйте снова'],
   'err.handled': ['відповідь уже оброблено', 'this reply is already handled', 'ответ уже обработан'],
   'err.empty': ['порожній текст', 'empty text', 'пустой текст'],
-  'err.boxTaken': ['У полі вводу цього чату в Teams уже є ваш ненадісланий текст — надішліть або зітріть його там і спробуйте ще раз', 'Teams has your unsent text in this chat’s message box: send or delete it there and try again', 'В поле ввода этого чата в Teams уже есть ваш неотправленный текст — отправьте или сотрите его там и попробуйте ещё раз'],
+  'err.boxTaken': ['У вікні Teams Сороки в цьому чаті лежить ваш ненадісланий текст — Сорока відкрила чат: надішліть або зітріть його там і спробуйте ще раз', 'Soroka’s Teams window holds your unsent text in this chat — Soroka opened the chat: send or delete it there and try again', 'В окне Teams Сороки в этом чате лежит ваш неотправленный текст — Сорока открыла чат: отправьте или сотрите его там и попробуйте ещё раз'],
   'err.fewMessages': ['В останніх чатах замало ваших повідомлень, щоб зрозуміти стиль', 'Too few of your messages in recent chats to learn your style', 'В последних чатах слишком мало ваших сообщений, чтобы понять стиль'],
   'err.claudeMissing': ['Claude Code не знайдено на цьому комп’ютері', 'Claude Code is not installed on this computer', 'Claude Code не найден на этом компьютере'],
   'err.claudeLogin': ['Потрібно увійти в Claude Code', 'Sign in to Claude Code', 'Нужно войти в Claude Code'],
