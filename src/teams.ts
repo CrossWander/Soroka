@@ -732,7 +732,7 @@ export async function send(c: ChatRef, text: string, { replace, quote }: { repla
     throw fail(500, 'the compose box does not hold the text as typed, not sent');
   }
   if (!(await isOpen(c))) throw fail(409, 'chat switched before send, not sent');
-  if (!(await ensureBoxFocus())) throw fail(500, 'compose box lost the focus, not sent');
+  if (!(await ensureBoxFocus())) { await clearBox(); throw fail(500, 'compose box lost the focus, not sent'); } // not left there as "the user's"
   await press('Enter');
   // Teams empties the box as the message goes: then it went, however long the chat takes to show it. Still there: Teams did not
   // take the Enter, and the text (the app's own) is wiped, so sending again cannot double it.
