@@ -361,10 +361,12 @@ handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPa
 // ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
 // stay: no timeout, the card waits for the user's answer; gone: it closed without one of its actions
+// stack: the mentions of one channel, in one card without a reply (key: 'chan:' + the channel)
 type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; click?: () => void; gone?: () => void;
-  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean } };
+  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean };
+  stack?: { key: string; msgs: Msg[] } };
 let toastWin: BrowserWindow | null = null;
-let toastDraft: string | undefined; // the message card on screen: its draft
+let toastDraft: string | undefined; // the message card on screen: its draft, or its channel's stack key
 const carded = (n: string) => toastDraft === n || toastQueue.some(x => x.reply?.n === n); // its card is up, or waits its turn
 let toastHandlers: ((() => void) | undefined)[] = [], toastGone: (() => void) | undefined;
 // One card at a time: a newer one waits its turn instead of wiping out the one on screen. A burst past 5 waiting comes as
@@ -387,7 +389,7 @@ function toast(item: Toast, fromQueue = false) {
     refreshTray();
   }
   if (toastOn) { if (toastQueue.length < 5 || item.stay) toastQueue.push(item); else toastMissed++; return; } // a question to the user is never dropped
-  toastOn = true; toastDraft = item.reply?.n;
+  toastOn = true; toastDraft = item.reply?.n ?? item.stack?.key;
   if (!item.stay) toastGuard = setTimeout(nextToast, 60_000); // the card never reported back (its page crashed): don't block the rest
   const { click, long, stay, gone, actions = [], ...card } = item;
   toastHandlers = [click, ...actions.map(a => a.run)];
@@ -1291,16 +1293,20 @@ async function held(n: string) {
   saveState();
   return true;
 }
+// One card per chat or channel: its card on screen takes the next message, and stays on for it
+function intoCard(key: string, msgs: Msg[]) {
+  if (toastDraft !== key || !toastWin) return false;
+  if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 60_000); } // not once the user is typing in it
+  const wc = toastWin.webContents, send = () => wc.send('toast:msgs', { n: key, msgs });
+  if (wc.isLoading()) wc.once('did-finish-load', send); else send(); // a new card's page: after its own payload
+  return true;
+}
 function announce(n: string, why?: string) {
   const d = state.drafts[n];
   if (d?.status !== 'pending') return;
   const msgs = d.msgs ?? [];
-  // One card per chat: the next message goes into its card on screen (which stays on), or into the one waiting its turn
-  if (toastDraft === n && toastWin) {
-    if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 60_000); } // not once the user is typing in it
-    const wc = toastWin.webContents, send = () => wc.send('toast:msgs', { n, msgs });
-    return wc.isLoading() ? wc.once('did-finish-load', send) : send(); // a new card's page: after its own payload
-  }
+  // the next message goes into its card on screen, or into the one waiting its turn
+  if (intoCard(n, msgs)) return;
   const queued = toastQueue.find(x => x.reply?.n === n);
   if (queued?.reply) { queued.message = d.last; queued.reply.msgs = msgs; return; }
   const ready = !!d.variants?.length;
@@ -1695,6 +1701,7 @@ async function tick() {
 // (what comes meanwhile is announced after them). The first read only remembers what is there.
 const ANNOUNCED = ['iconsMention', 'everyoneMentionIcon', 'tagIcon']; // @you, @everyone, @a tag of yours
 let activityAt = 0;
+const channelCards = new Map<string, { msgs: Msg[]; id: string }>(); // per channel: the mentions in its last card, the latest's Activity id
 async function checkActivity() {
   if (!settings.activity || windowInUse() || quiet() || !(await teams.activityBadge() || Date.now() - activityAt > 10 * 60_000)) return;
   activityAt = Date.now();
@@ -1708,8 +1715,14 @@ async function checkActivity() {
     if (first || !listed(like) || !(ANNOUNCED.includes(a.kind) || keywordHit(like))) continue;
     if (chatTitles.has(a.where)) continue; // a mention in a chat: its own card came from the chat list already
     log(`activity: ${a.kind} in ${a.where}`);
-    toast({ title: a.where, message: a.text, hint: a.title, tone: 'accent', long: true, click: () => openActivity(a.id),
-      actions: [{ label: t('act.openTeams'), run: () => openActivity(a.id) }] });
+    // One card per channel: a mention while its card is up or waits its turn goes into it; the card opens the latest one
+    const key = `chan:${a.where}`, msg: Msg = { who: a.title, text: a.text, time: new Date().toTimeString().slice(0, 5), me: ANNOUNCED.includes(a.kind) };
+    const c = channelCards.get(key);
+    if (c && (toastDraft === key || toastQueue.some(x => x.stack?.key === key))) { c.msgs.push(msg); c.id = a.id; intoCard(key, c.msgs); continue; }
+    const card = { msgs: [msg], id: a.id };
+    channelCards.set(key, card);
+    toast({ title: a.where, message: a.text, tone: 'accent', long: true, stack: { key, msgs: card.msgs }, click: () => openActivity(card.id),
+      actions: [{ label: t('act.openTeams'), run: () => openActivity(card.id) }] });
   }
   state.activitySeen.splice(200);
   saveState();

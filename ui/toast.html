@@ -140,7 +140,7 @@
   // a single whole message of a direct chat stays the plain text it always was. fresh: how many at the end just came.
   // From 4 messages "In brief" offers the AI's few lines instead (briefOk: not for a chat kept from the AI).
   // all: the user opened the earlier ones too ("↑ N earlier"); a new card starts with the last 3.
-  let briefOk = false, msgsNow = [], all = false;
+  let briefOk = false, msgsNow = [], all = false, key = null; // key: the card's draft n, or its channel's stack
   const cut = m => m.text.endsWith('…');
   function showMsgs(msgs, fresh = 0) {
     msgsNow = msgs;
@@ -169,9 +169,9 @@
       }
       for (const m of r.items) {
         const b = document.createElement('div');
-        b.className = 'bubble' + (m.me ? ' me' : '') + (cut(m) ? ' cut' : '');
+        b.className = 'bubble' + (m.me ? ' me' : '') + (cut(m) && n ? ' cut' : ''); // a channel's card has no chat to read
         b.textContent = m.text;
-        if (cut(m)) { b.title = t('card.whole'); b.onclick = e => { e.stopPropagation(); whole(); }; }
+        if (cut(m) && n) { b.title = t('card.whole'); b.onclick = e => { e.stopPropagation(); whole(); }; }
         run.append(b);
       }
       const time = document.createElement('time');
@@ -213,10 +213,11 @@
     $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
     $('message').textContent = t.message || '';
     briefOk = !!t.reply?.brief; all = false;
-    showMsgs(t.reply?.msgs ?? []);
+    n = t.reply?.n ?? null; key = n ?? t.stack?.key ?? null;
+    showMsgs(t.reply?.msgs ?? t.stack?.msgs ?? []);
     say(t.hint || '');
     $('close').title = t.closeLabel;
-    n = t.reply?.n ?? null; variants = t.reply?.variants ?? []; next = 0; replying = false; keys = false; sending = false; clearTimeout(idle);
+    variants = t.reply?.variants ?? []; next = 0; replying = false; keys = false; sending = false; clearTimeout(idle);
     $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
     for (const b of document.querySelectorAll('[data-react]')) b.hidden = false;
     $('ai').hidden = !t.reply?.ai;
@@ -283,7 +284,7 @@
   // The chat's next message, while its card is up: into the card, and the card stays on for it (not under the mouse or
   // the reply field: those keep it anyway). The variants were for fewer messages: ✨ makes new ones.
   bridge.on('toast:msgs', v => {
-    if (v.n !== n) return;
+    if (v.n !== key) return;
     clearTimeout(leaving); card.classList.remove('leaving'); card.classList.add('shown'); // it was just going: it stays
     showMsgs(v.msgs, 1); // one message at a time
     variants = []; next = 0;
