@@ -26,14 +26,24 @@
   .sub { color: var(--muted); font-size: 12px; }
   .sub:empty { display: none; }
   /* a chat's messages as they came: one person's in a row as one run, the author over it in a group, the time under it */
-  .talk { display: grid; gap: 6px; margin-top: 4px; max-height: 196px; overflow-y: auto; overscroll-behavior: contain; }
+  /* the last 3 by default ("↑ N earlier" above them); all of them scroll, past 260 px, with a thin bar */
+  .talk { display: grid; gap: 5px; margin-top: 4px; max-height: 260px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--btn-hover) transparent; }
+  .talk .link { justify-self: start; }
   .run { display: grid; gap: 2px; justify-items: start; min-width: 0; }
   .run .who { font-size: 12px; font-weight: 600; color: var(--accent); }
   .run .who.p1 { color: var(--p1); } .run .who.p2 { color: var(--p2); }
-  .bubble { background: var(--btn); border-radius: 10px 10px 10px 3px; padding: 4px 9px; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+  .bubble { background: var(--btn); border-radius: 10px 10px 10px 3px; padding: 3px 9px; font-size: 13px; line-height: 1.35; max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
   .run .bubble:not(:last-of-type) { border-radius: 10px; }
   .bubble.me { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); } /* the one that mentions the user */
   .run time { color: var(--muted); font-size: 11px; }
+  .bubble.cut { cursor: pointer; } .bubble.cut:hover { background: var(--btn-hover); } /* Teams cut it: a click brings the whole text */
+  /* "In brief": the AI's few lines in place of the messages */
+  .sum { margin-top: 4px; background: var(--btn); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; justify-items: start; overflow-wrap: anywhere; cursor: default; }
+  .sum .head { color: var(--muted); font-size: 12px; }
+  .link { background: transparent; color: var(--muted); font-size: 12px; padding: 0; }
+  .link:hover { color: var(--fg); text-decoration: underline; }
+  .subline { display: flex; gap: 8px; align-items: baseline; }
+  .link.brief { color: var(--accent); } /* next to "N messages": the row below has no room for it */
   @media (prefers-reduced-motion: no-preference) { .bubble.fresh { animation: fresh 1.4s ease-out; } }
   @keyframes fresh { from { background: color-mix(in srgb, var(--accent) 26%, transparent); } }
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -87,7 +97,8 @@
 <body>
   <div class="card" id="card">
     <img id="icon" alt="">
-    <div><div class="title" id="title"></div><div class="sub" id="sub"></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div><div class="hint" id="hint"></div></div>
+    <div><div class="title" id="title"></div><div class="subline" id="subline" hidden><span class="sub" id="sub"></span><button class="link brief" id="brief" data-i18n="card.brief" hidden></button></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div>
+      <div class="sum" id="sum" hidden><div class="head" id="sum-head"></div><div id="sum-text"></div><button class="link" id="show-all" data-i18n="card.showAll"></button></div><div class="hint" id="hint"></div></div>
     <button class="close" id="close">✕</button>
     <div class="actions" id="actions"></div>
     <div class="reply" id="reply" hidden>
@@ -124,30 +135,43 @@
   const fit = () => bridge.invoke('toast:size', card.offsetHeight + 32 + ($('menu').hidden ? 0 : $('menu').offsetHeight + 6));
   const say = (text, error) => { $('hint').textContent = text; $('hint').classList.toggle('error', !!error); return fit(); };
   const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-  const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button')) b.disabled = on; };
+  const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button, #brief')) b.disabled = on; };
   // A chat's card gathers its messages as they come (one person's in a row as one run, the author over it in a group);
-  // a single message of a direct chat stays the plain text it always was. fresh: how many at the end just came.
+  // a single whole message of a direct chat stays the plain text it always was. fresh: how many at the end just came.
+  // From 4 messages "In brief" offers the AI's few lines instead (briefOk: not for a chat kept from the AI).
+  // all: the user opened the earlier ones too ("↑ N earlier"); a new card starts with the last 3.
+  let briefOk = false, msgsNow = [], all = false;
+  const cut = m => m.text.endsWith('…');
   function showMsgs(msgs, fresh = 0) {
-    const many = msgs.length > 1 || !!msgs[0]?.who;
-    $('talk').hidden = !many; $('message').hidden = many;
+    msgsNow = msgs;
+    const many = msgs.length > 1 || !!msgs[0]?.who || (msgs.length === 1 && cut(msgs[0]));
+    $('talk').hidden = !many; $('message').hidden = many; $('sum').hidden = true;
+    $('brief').hidden = !(briefOk && msgs.length >= 4);
     $('sub').textContent = msgs.length > 1 ? plural(msgs.length) : '';
+    $('subline').hidden = msgs.length < 2;
     if (!many) return;
-    const runs = [], people = [];
-    for (const m of msgs) { const r = runs.at(-1); if (r && r.who === m.who) r.items.push(m); else runs.push({ who: m.who, items: [m] }); }
-    $('talk').replaceChildren(...runs.map(r => {
+    const people = [...new Set(msgs.map(m => m.who).filter(Boolean))]; // the colours by who wrote first, earlier ones too
+    const from = all ? 0 : Math.max(0, msgs.length - 3), runs = [];
+    for (const m of msgs.slice(from)) { const r = runs.at(-1); if (r && r.who === m.who) r.items.push(m); else runs.push({ who: m.who, items: [m] }); }
+    const older = document.createElement('button');
+    older.className = 'link';
+    older.textContent = t('card.older', { count: plural(from) });
+    older.onclick = e => { e.stopPropagation(); all = true; showMsgs(msgsNow); $('talk').scrollTop = 0; fit(); };
+    $('talk').replaceChildren(...(from ? [older] : []), ...runs.map(r => {
       const run = document.createElement('div');
       run.className = 'run';
       if (r.who) {
         const w = document.createElement('span');
-        const i = people.includes(r.who) ? people.indexOf(r.who) : people.push(r.who) - 1;
+        const i = people.indexOf(r.who);
         w.className = `who${i % 3 ? ` p${i % 3}` : ''}`;
         w.textContent = r.who;
         run.append(w);
       }
       for (const m of r.items) {
         const b = document.createElement('div');
-        b.className = 'bubble' + (m.me ? ' me' : '');
+        b.className = 'bubble' + (m.me ? ' me' : '') + (cut(m) ? ' cut' : '');
         b.textContent = m.text;
+        if (cut(m)) { b.title = t('card.whole'); b.onclick = e => { e.stopPropagation(); whole(); }; }
         run.append(b);
       }
       const time = document.createElement('time');
@@ -159,6 +183,28 @@
     for (let i = Math.max(0, bubbles.length - fresh); i < bubbles.length; i++) bubbles[i].classList.add('fresh');
     $('talk').scrollTop = $('talk').scrollHeight; // the newest in view
   }
+  // the whole texts of the messages Teams cut, from the chat itself (the user clicked: the chat gets read)
+  async function whole() {
+    clearTimeout(timer); busy(true); say(t('card.reading'));
+    try { showMsgs(await bridge.invoke('draft:whole', n)); await say(''); }
+    catch (err) { say(failed(err), true); }
+    finally { busy(false); }
+  }
+  $('brief').onclick = async e => {
+    e.stopPropagation();
+    clearTimeout(timer); busy(true); say(t('card.briefing'));
+    try {
+      const r = await bridge.invoke('draft:brief', n);
+      showMsgs(r.msgs); // whole now, for "Show them all"
+      $('sum-head').textContent = t('card.briefHead', { count: plural(r.msgs.length) });
+      $('sum-text').textContent = r.text;
+      $('sum').hidden = false; $('talk').hidden = true; $('brief').hidden = true;
+      await say('');
+    } catch (err) { say(failed(err), true); }
+    finally { busy(false); }
+  };
+  $('show-all').onclick = e => { e.stopPropagation(); showMsgs(msgsNow); fit(); };
+  $('sum').onclick = e => e.stopPropagation(); // reading it is not "open the chat"
 
   bridge.on('toast', async t => {
     await i18n;
@@ -166,6 +212,7 @@
     $('icon').src = t.icon;
     $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
     $('message').textContent = t.message || '';
+    briefOk = !!t.reply?.brief; all = false;
     showMsgs(t.reply?.msgs ?? []);
     say(t.hint || '');
     $('close').title = t.closeLabel;
