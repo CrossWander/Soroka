@@ -1,7 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
+import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -12,7 +12,8 @@ import * as teams from './teams';
 import * as icon from './icon';
 import * as ai from './ai';
 import * as digest from './digest';
-import { byQuestion, type Talk } from './handoff';
+import { byQuestion, cleanHandoffs, type Talk } from './handoff';
+import * as agents from './agents';
 import { t } from './i18n';
 import * as i18n from './i18n';
 
@@ -52,8 +53,11 @@ const handle = (channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...a: any[
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; officeMenu: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
+  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; officeMenu: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean;
+  agent: string; projectDir: string; projectAsk: boolean; handoffKeep: string }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
+// agent: the user's AI agent a card's chat goes to (agents.ts), '' = none chosen; projectDir: the folder it opens in, or
+// projectAsk: a folder picked each time; handoffKeep: hours the files handed over to it stay
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
 const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:claude-haiku-5-5'];
 // wakeMode: what the AI does with a new message; the notification itself always comes
@@ -64,12 +68,13 @@ const MODELS = ['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'claude:cl
 // officeMenu: the button of Teams' Office menu (the dotted grid top left); false hides it
 const OPTIONS: Record<string, unknown[]> = { wakeMode: ['notify', 'drafts', 'monitor'], language: i18n.LANGS, remindAfter: ['', '60', '240', '1440'],
   followUpAfter: ['', '60', '240', '1440'], theme: ['', 'light', 'dark'], links: ['', 'browser'],
-  webChat: ['', ...Object.keys(ai.WEB)] };
+  webChat: ['', ...Object.keys(ai.WEB)], handoffKeep: ['1', '24', '168'] };
 const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false });
+  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false,
+  agent: '', projectDir: '', projectAsk: false, handoffKeep: '1' });
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
@@ -80,6 +85,7 @@ const CHECKS: Record<string, (v: unknown) => boolean> = {
   jiraUrl: v => v === '' || (isText(200)(v) && /^https:\/\/[^\s/]+(\/\S*)?$/.test(v as string)),
   label: v => typeof v === 'boolean', autostart: v => typeof v === 'boolean', summaryBackground: v => typeof v === 'boolean',
   draftModel: v => usable().includes(v as string), summaryModel: v => usable().includes(v as string),
+  agent: v => v === '' || agents.detectAgents().some(a => a.id === v), projectDir: isText(500), projectAsk: v => typeof v === 'boolean',
 };
 // The models of the AIs ready now: what "Refresh" found in each plan ('ok', or why not), and Claude's defaults
 // ('' = not checked) until Claude Code was asked.
@@ -154,7 +160,8 @@ const state = readJson('state.json', { nextDraft: 1, drafts: {} as Record<string
   toolsOk: [] as string[], // toolsOk: the AIs with tools of their own the user let read chats
   callBounds: null as Electron.Rectangle | null, // callBounds: where the user left the call window
   miniAt: null as { x: number; y: number } | null, // miniAt: where the user left the call's compact view
-  miniMode: '' }); // miniMode: 'bar' when the user folded the compact view to its buttons
+  miniMode: '', // miniMode: 'bar' when the user folded the compact view to its buttons
+  lastDir: '' }); // lastDir: the project folder last picked for an agent, where the next pick starts
 state.models = Object.fromEntries(Object.entries(state.models).map(([m, s]) => [m.includes(':') ? m : `claude:${m}`, s])); // before 0.10: Claude's only
 ai.setup(data);
 ai.usage.onSpent = tokens => {
@@ -1213,6 +1220,10 @@ async function installUpdate(url: string, version: string) {
 }
 setTimeout(() => void checkUpdate(), 60_000);
 setInterval(() => void checkUpdate(), 86_400_000);
+// The files handed over to an agent go once their time is up: at start and every hour.
+const cleanHandoff = () => cleanHandoffs(Number(settings.handoffKeep) * 3_600_000);
+cleanHandoff();
+setInterval(cleanHandoff, 3_600_000);
 
 // "Refresh" in the settings: each AI ready lists the models of its plan; for Claude Code, one tiny call per family says
 // which model it stands for now and whether the plan includes it ("ok", or why not, e.g. "requires usage credits").
@@ -1780,6 +1791,11 @@ handle('status:get', () => ({ teams: status, ai: aiInfo, ready: aiReady(), aiOff
   spent: state.spent.day === new Date().toDateString() ? state.spent.tokens : 0 }));
 handle('ai:login', (_e, id: string) => ai.login(String(id)));
 handle('ai:install', (_e, id: string) => { const url = ai.installPage(String(id)); if (url) void shell.openExternal(url); }); // only the pages in the registry
+handle('agents:list', () => agents.detectAgents());
+handle('dir:pick', async () => {
+  const r = await dialog.showOpenDialog(teamsWin, { properties: ['openDirectory'], defaultPath: settings.projectDir || state.lastDir || undefined });
+  return r.canceled ? undefined : r.filePaths[0];
+});
 handle('teams:check', () => checkTeams(false));
 handle('report:copy', () => clipboard.writeText(report()));
 handle('notify:test', () => toast({ title: t('toast.test'), message: t('toast.testText'), tone: 'accent' }));

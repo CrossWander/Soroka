@@ -176,6 +176,14 @@
           <div class="row" data-ai-on><span class="text"><span data-i18n="set.webChat"></span><span class="note" data-i18n="set.webNote"></span></span>
             <span class="ctl"><select name="webChat"><option value="" data-i18n="set.webAuto"></option><option value="claude">Claude</option><option value="chatgpt">ChatGPT</option>
               <option value="gemini">Gemini</option><option value="m365">Microsoft 365 Copilot</option><option value="github">GitHub Copilot</option></select></span></div>
+          <div class="row" data-ai-on><span class="text"><span data-i18n="set.agent"></span><span class="note" id="agentNote"></span></span>
+            <span class="ctl"><select name="agent" id="agent"><option value="" data-i18n="set.agentOff"></option></select></span></div>
+          <div class="row" data-ai-on><span class="text" data-i18n="set.projectDir"></span>
+            <span class="ctl"><input class="wide" name="projectDir" maxlength="500"><button id="projectPick" data-i18n="set.projectPick"></button></span></div>
+          <label class="row" data-ai-on><span class="text" data-i18n="set.projectAsk"></span><input type="checkbox" name="projectAsk"></label>
+          <div class="row" data-ai-on><span class="text"><span data-i18n="set.handoffKeep"></span><span class="note" data-i18n="set.handoffNote"></span></span>
+            <span class="ctl"><select name="handoffKeep"><option value="1" data-i18n="set.keep1"></option><option value="24" data-i18n="set.keep24"></option>
+              <option value="168" data-i18n="set.keep168"></option></select></span></div>
           <div class="row" data-ai><span class="text"><span data-i18n="set.aiSkip"></span><span class="note" data-i18n="set.aiSkipShort" data-i18n-title="set.aiSkipNote"></span></span>
             <span class="ctl"><input class="wide" name="aiSkip" maxlength="1000" data-i18n-placeholder="set.aiSkipPh"></span></div>
         </div>
@@ -229,6 +237,13 @@
     }
   };
   bridge.invoke('settings:get').then(s => show(s));
+  // The agents found on this computer; the chosen one is picked again once they are in the list
+  bridge.invoke('agents:list').then(list => {
+    $('agent').append(...list.map(a => new Option(`${a.name} — ${t(a.now ? 'set.agentNow' : 'set.agentFill')}`, a.id)));
+    $('agentNote').textContent = t(list.length ? 'set.agentNote' : 'set.agentNone');
+    $('agent').value = current.agent ?? '';
+  });
+  $('projectPick').onclick = async () => { const dir = await bridge.invoke('dir:pick'); if (dir) save({ projectDir: dir }, $('projectPick').previousElementSibling); };
   $('close').onclick = () => bridge.invoke('settings:close');
   addEventListener('keydown', e => { if (e.key === 'Escape') bridge.invoke('settings:close'); }); // as Teams' own dialogs
   document.addEventListener('change', ({ target: el }) => {

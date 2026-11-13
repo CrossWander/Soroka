@@ -25,7 +25,7 @@ export const usage = claude.usage; // tokens per answer, where the program repor
 const win = process.platform === 'win32';
 const HOME = os.homedir();
 const LOCAL = process.env.LOCALAPPDATA ?? path.join(HOME, 'AppData', 'Local');
-function onPath(names: string[], extra: string[] = []) {
+export function onPath(names: string[], extra: string[] = []) {
   const dirs = [...extra, path.join(HOME, '.local', 'bin'), ...(process.env.PATH ?? '').split(path.delimiter),
     ...(win ? [path.join(process.env.APPDATA ?? '', 'npm')] : ['/opt/homebrew/bin', '/usr/local/bin'])];
   const files = names.flatMap(n => (win ? [`${n}.exe`, `${n}.cmd`] : [n]));
