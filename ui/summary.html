@@ -29,6 +29,9 @@
   @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
   #out { flex: 1; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
   #out:empty { display: none; }
+  /* the talk: the user's question on the right, the AI's answer under it */
+  #out .q { justify-self: end; margin: 8px 0 4px auto; width: fit-content; max-width: 85%; background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 10px 10px 3px 10px; padding: 4px 10px; }
+  #out .q:first-child { margin-top: 0; }
   .chip { font-size: 12px; padding: 2px 8px; cursor: pointer; }
   #jira:empty { display: none; }
 </style>
@@ -39,7 +42,8 @@
     <select id="chat" data-i18n-aria="summary.chat"><option data-i18n="summary.loading"></option></select>
     <select id="period" data-i18n-title="summary.period">
       <option value="d0" data-i18n="summary.d0"></option><option value="d1" data-i18n="summary.d1"></option><option value="d7" data-i18n="summary.d7" selected></option>
-      <option value="d30" data-i18n="summary.d30"></option><option value="n100" data-i18n="summary.n100"></option><option value="me" data-i18n="summary.me"></option>
+      <option value="d30" data-i18n="summary.d30"></option><option value="n20" data-i18n="summary.n20"></option><option value="n50" data-i18n="summary.n50"></option>
+      <option value="n100" data-i18n="summary.n100"></option><option value="me" data-i18n="summary.me"></option><option value="q" data-i18n="summary.q"></option>
     </select>
   </div>
   <fieldset id="pick" hidden><p data-i18n="summary.pickHint"></p><div id="picklist"></div></fieldset>
@@ -60,11 +64,21 @@
   // The summary is text about Teams messages (the AI's, or picked from them): textContent only.
   const $ = id => document.getElementById(id);
   const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-  let chats = [], preset = null, running = false;
+  // talk: the questions asked about this chat and period, and the answers; a follow-up goes with them. Another chat, another
+  // period or a summary starts it over.
+  let chats = [], preset = null, running = false, talk = [];
+  function showTalk() {
+    $('out').replaceChildren(...talk.flatMap(x => [Object.assign(document.createElement('div'), { className: 'q', textContent: x.q }),
+      Object.assign(document.createElement('div'), { className: 'a', textContent: x.a })]));
+    $('out').scrollTop = $('out').scrollHeight;
+  }
   bridge.on('summary:preset', p => { preset = p; apply(); }); // before any await: the preset comes right after load
   await i18n;
   try { $('period').value = localStorage.getItem('period') || 'd7'; } catch { /* storage unavailable: keep the default */ }
-  $('period').onchange = () => { try { localStorage.setItem('period', $('period').value); } catch { /* not remembered */ } };
+  $('period').onchange = () => {
+    if (talk.length) { talk = []; $('out').textContent = ''; }
+    try { localStorage.setItem('period', $('period').value); } catch { /* not remembered */ }
+  };
   const DIGEST = { id: '*', title: t('summary.digest') }; // every chat with a message today
   const MISSED = { id: '!', title: t('summary.missed') }; // the unread chats, each since the user's last message
   const SEVERAL = { id: '+', title: t('summary.several') }; // the chats ticked below
@@ -88,7 +102,7 @@
     $('pick').hidden = v !== '+'; $('pick').disabled = running;
     $('ask').disabled = running || $('go').disabled;
   };
-  $('chat').onchange = () => { digestPicked(); showLast(); };
+  $('chat').onchange = () => { talk = []; digestPicked(); showLast(); };
   // The last summary of the picked chat, kept by the app: one that finished while the window was out of sight is not lost
   async function showLast() {
     const c = chats.find(x => x.id === $('chat').value);
@@ -107,8 +121,12 @@
     const p = preset; preset = null;
     if (running) return true; // a run is on screen: the window only comes to the front
     if (p.chatId) $('chat').value = p.chatId;
+    if (p.period) $('period').value = p.period; // a card's question: by question, not remembered as the user's choice
     digestPicked();
-    if (p.result) show(p.result, chats.find(c => c.id === p.chatId) ?? DIGEST); else showLast();
+    talk = p.history ?? [];
+    if (p.result) show(p.result, chats.find(c => c.id === p.chatId) ?? DIGEST);
+    else if (talk.length) { showTalk(); $('status').className = ''; $('status').textContent = t('summary.talkHead'); $('copy').hidden = false; }
+    else showLast();
     return true;
   }
   // Issue keys in the summary open in Jira (only when its address is set)
@@ -117,7 +135,7 @@
     $('jira').replaceChildren(...keys.map(k => { const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${k} ↗`; b.onclick = () => bridge.invoke('open:jira', k); return b; }));
   }
   function show(r, c, question) {
-    $('out').textContent = r.text;
+    if (question) { talk.push({ q: question, a: r.text }); showTalk(); } else $('out').textContent = r.text;
     showJira(r.text);
     $('status').textContent = question ? t('summary.answer', { title: c.title })
       : c.id === '*' ? t('summary.digestDone', { n: r.count || '' }).replace(/:\s*$/, '')
@@ -138,10 +156,14 @@
     const c = target();
     if (!c) return;
     const [mine, other] = plain ? [$('plain'), $('go')] : [$('go'), $('plain')]; // the one clicked turns into «Stop»
-    $('spin').hidden = false; running = true; mine.classList.add('running'); other.disabled = true; $('chat').disabled = true; digestPicked(); $('copy').hidden = true; $('out').textContent = ''; showJira('');
+    $('spin').hidden = false; running = true; mine.classList.add('running'); other.disabled = true; $('chat').disabled = true; digestPicked(); $('copy').hidden = true; showJira('');
+    if (!question) { talk = []; $('out').textContent = ''; } // a question adds to the talk on screen
     $('status').className = '';
     $('status').textContent = t(plain ? 'summary.reading' : question ? 'summary.asking' : 'summary.running', { title: c.title }) + (summaryBackground ? ` ${t('summary.canClose')}` : '');
-    try { show(await bridge.invoke('summary:run', c.id, c.title, $('period').value, { ...c.ask, question, plain }), c, question); }
+    try {
+      show(await bridge.invoke('summary:run', c.id, c.title, $('period').value, { ...c.ask, question, plain, history: question ? talk : undefined }), c, question);
+      if (question) $('question').value = '';
+    }
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
     finally { running = false; $('spin').hidden = true; mine.classList.remove('running'); $('plain').disabled = false; $('chat').disabled = false; digestPicked(); checkAi(); }
   }
@@ -171,7 +193,7 @@
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
     finally { $('handoff').disabled = false; $('spin').hidden = true; }
   };
-  $('copy').onclick = async () => { await navigator.clipboard.writeText($('out').textContent); $('copy').textContent = t('summary.copied'); setTimeout(() => ($('copy').textContent = t('summary.copy')), 1500); };
+  $('copy').onclick = async () => { await navigator.clipboard.writeText(talk.length ? talk.map(x => `${x.q}\n${x.a}`).join('\n\n') : $('out').textContent); $('copy').textContent = t('summary.copied'); setTimeout(() => ($('copy').textContent = t('summary.copy')), 1500); };
 </script>
 </body>
 </html>
