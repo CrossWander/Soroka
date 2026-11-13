@@ -76,6 +76,13 @@
     background: var(--menu); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
   .menu button { background: transparent; text-align: left; padding: 6px 10px; white-space: nowrap; }
   .menu button:hover { background: var(--btn-hover); }
+  /* "↗ Agent" and its ▾ for another period; it stands out when the messages carry ray-ids, stack traces, issue keys, file names */
+  .pick { position: relative; display: flex; gap: 1px; }
+  .pick > button { padding: 4px 8px; background: var(--btn); border-radius: 6px 0 0 6px; }
+  .pick > button + button { padding: 4px 5px; border-radius: 0 6px 6px 0; }
+  .pick > button:hover { background: var(--btn-hover); }
+  .pick > .hot { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .pick .menu { right: auto; left: 0; }
   .reply { grid-column: 2 / 4; display: flex; gap: 6px; margin-top: 10px; cursor: default; }
   .reply input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--fg); }
   /* quick replies under the field: a click puts one into it */
@@ -111,6 +118,9 @@
     <div class="row" id="row" hidden>
       <button class="main" id="open" data-i18n="act.reply"></button>
       <button class="emoji" data-react="yes"><span><img alt="👍"></span></button><button class="emoji" data-react="heart"><span><img alt="❤️"></span></button><button class="emoji" data-react="laugh"><span><img alt="😆"></span></button>
+      <span class="pick" id="agent-pick" hidden><button id="agent" data-i18n="card.agent"></button><button id="agent-more" data-i18n-title="card.agentPeriod">▾</button>
+        <span class="menu" id="agent-menu" hidden><button data-period="q" data-i18n="summary.q"></button><button data-period="d0" data-i18n="summary.d0"></button>
+          <button data-period="d7" data-i18n="summary.d7"></button><button data-period="n50" data-i18n="summary.n50"></button></span></span>
       <span class="more"><button id="more" data-i18n-title="card.more">⋯</button>
         <span class="menu" id="menu" hidden><button id="m-react" data-i18n="card.reactions"></button><span id="m-actions"></span><button id="m-later" data-i18n="card.later"></button></span></span>
     </div>
@@ -133,7 +143,8 @@
   }
   const act = i => { clearTimeout(timer); card.classList.remove('shown'); bridge.invoke('toast:click', i); }; // -1 = the card itself
   // the window fits the card, and the open menu above it
-  const fit = () => bridge.invoke('toast:size', card.offsetHeight + 32 + ($('menu').hidden ? 0 : $('menu').offsetHeight + 6));
+  const menuOpen = () => [$('menu'), $('agent-menu')].find(m => !m.hidden);
+  const fit = () => bridge.invoke('toast:size', card.offsetHeight + 32 + (menuOpen() ? menuOpen().offsetHeight + 6 : 0));
   const say = (text, error) => { $('hint').textContent = text; $('hint').classList.toggle('error', !!error); return fit(); };
   const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button, #brief')) b.disabled = on; };
@@ -233,6 +244,20 @@
   $('ask-field').onkeydown = e => { if (e.key === 'Enter') ask(); };
   $('askbox').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
   $('continue').onclick = e => { e.stopPropagation(); if (asked) bridge.invoke('draft:continue', n, asked); };
+  // "Look into it in the agent": the chat, by question or the period under ▾, goes to the user's AI agent in the project folder
+  async function toAgent(period) {
+    $('agent-menu').hidden = true;
+    const mine = key; let name;
+    await request('card.reading', () => bridge.invoke('draft:agent', n, period), r => (name = r));
+    if (name && key === mine) say(t('card.agentDone', { name }));
+  }
+  $('agent').onclick = e => { e.stopPropagation(); toAgent('q'); };
+  $('agent-more').onclick = e => { e.stopPropagation(); $('agent-menu').hidden = !$('agent-menu').hidden; $('menu').hidden = true; clearTimeout(timer); fit(); };
+  for (const b of document.querySelectorAll('[data-period]')) b.onclick = e => { e.stopPropagation(); toAgent(b.dataset.period); };
+  const showMarks = marks => {
+    $('agent').classList.toggle('hot', !!marks?.length);
+    $('agent').title = [t('card.agentTip'), ...(marks?.length ? [t('card.agentFound', { what: marks.map(k => t(`mark.${k}`)).join(', ') })] : [])].join('\n');
+  };
   $('show-all').onclick = e => { e.stopPropagation(); all = true; showMsgs(msgsNow); fit(); };
   $('sum').onclick = e => e.stopPropagation(); // reading it is not "open the chat"
 
@@ -248,7 +273,8 @@
     say(t.hint || '');
     $('close').title = t.closeLabel;
     variants = t.reply?.variants ?? []; next = 0; replying = false; keys = false; sending = false; clearTimeout(idle);
-    $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = true; $('open').hidden = false; $('field').value = '';
+    $('row').hidden = !n; $('reply').hidden = $('quick').hidden = true; $('menu').hidden = $('agent-menu').hidden = true; $('open').hidden = false; $('field').value = '';
+    $('agent-pick').hidden = !t.reply?.agent; showMarks(t.reply?.marks);
     for (const b of document.querySelectorAll('[data-react]')) b.hidden = false;
     $('ai').hidden = !t.reply?.ai;
     $('quick').replaceChildren(...(t.reply?.quick ?? []).map(q => {
@@ -317,9 +343,10 @@
     if (v.n !== key) return;
     clearTimeout(leaving); card.classList.remove('leaving'); card.classList.add('shown'); // it was just going: it stays
     showMsgs(v.msgs, 1); // one message at a time
+    showMarks(v.marks);
     variants = []; next = 0;
     fit();
-    if (!replying && $('menu').hidden && !card.matches(':hover')) arm();
+    if (!replying && !menuOpen() && !card.matches(':hover')) arm();
   });
   // drafts mode: the variants the app was still making when the card came
   bridge.on('toast:variants', v => {
@@ -361,12 +388,12 @@
       openField(false);
     } catch (err) { busy(false); say(failed(err), true); }
   };
-  $('more').onclick = e => { e.stopPropagation(); $('menu').hidden = !$('menu').hidden; clearTimeout(timer); fit(); };
+  $('more').onclick = e => { e.stopPropagation(); $('menu').hidden = !$('menu').hidden; $('agent-menu').hidden = true; clearTimeout(timer); fit(); };
   $('m-react').onclick = e => { e.stopPropagation(); bridge.invoke('react:open', n); leave(); };
   $('m-later').onclick = e => { e.stopPropagation(); bridge.invoke('draft:snooze', n, 60); leave(); };
 
   card.onmouseenter = () => clearTimeout(timer); // the user is reading or reaching for it
-  card.onmouseleave = () => { if ($('menu').hidden) arm(); };
+  card.onmouseleave = () => { if (!menuOpen()) arm(); };
   card.onclick = () => act(-1);
   $('close').onclick = e => { e.stopPropagation(); leave(); };
 </script>

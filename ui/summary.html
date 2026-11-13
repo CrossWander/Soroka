@@ -34,6 +34,7 @@
   #out .q:first-child { margin-top: 0; }
   .chip { font-size: 12px; padding: 2px 8px; cursor: pointer; }
   #jira:empty { display: none; }
+  #agent.hot { border-color: var(--accent); color: var(--accent); } /* the messages carry ray-ids, stack traces, issue keys, file names */
 </style>
 </head>
 <body data-tab="summary">
@@ -51,6 +52,7 @@
     <button class="go" id="go"><span data-i18n="summary.go"></span><span data-i18n="summary.stop"></span></button>
     <button id="plain" data-i18n-title="summary.plainTip"><span data-i18n="summary.plain"></span><span data-i18n="summary.stop"></span></button>
     <button id="handoff" data-i18n="summary.handoff" data-i18n-title="summary.handoffTip"></button>
+    <button id="agent" data-i18n="summary.agent" data-i18n-title="card.agentTip" hidden></button>
   </div>
   <div class="row"><input id="question" maxlength="500" data-i18n-placeholder="summary.askPh"><button id="ask" data-i18n="summary.ask"></button></div>
   <div class="statusline"><span class="spin" id="spin" hidden></span><span id="status" data-i18n="summary.hint"></span></div>
@@ -66,7 +68,7 @@
   const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   // talk: the questions asked about this chat and period, and the answers; a follow-up goes with them. Another chat, another
   // period or a summary starts it over.
-  let chats = [], preset = null, running = false, talk = [];
+  let chats = [], preset = null, running = false, talk = [], aiOff = false, agentsFound = false;
   function showTalk() {
     $('out').replaceChildren(...talk.flatMap(x => [Object.assign(document.createElement('div'), { className: 'q', textContent: x.q }),
       Object.assign(document.createElement('div'), { className: 'a', textContent: x.a })]));
@@ -101,6 +103,7 @@
     $('period').disabled = running || v === '*' || v === '!';
     $('pick').hidden = v !== '+'; $('pick').disabled = running;
     $('ask').disabled = running || $('go').disabled;
+    $('agent').hidden = aiOff || !agentsFound || v.length < 2; // one chat only
   };
   $('chat').onchange = () => { talk = []; digestPicked(); showLast(); };
   // The last summary of the picked chat, kept by the app: one that finished while the window was out of sight is not lost
@@ -109,7 +112,7 @@
     const r = c && c.id !== '+' && await bridge.invoke('summary:last', c.id);
     if (running || c?.id !== $('chat').value) return; // a run started, or another chat was picked meanwhile
     $('status').className = '';
-    if (!r) { $('out').textContent = ''; showJira(''); $('copy').hidden = true; $('status').textContent = t(c?.id === '!' ? 'summary.missedHint' : 'summary.hint'); return; }
+    if (!r) { $('out').textContent = ''; showJira(''); $('copy').hidden = true; $('agent').classList.remove('hot'); $('status').textContent = t(c?.id === '!' ? 'summary.missedHint' : 'summary.hint'); return; }
     show(r, c);
     const at = new Date(r.at).toLocaleString(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     $('status').textContent = `${t('summary.lastAt', { time: at })} ${$('status').textContent}`;
@@ -142,6 +145,7 @@
       : c.id.length === 1 ? (r.count ? t('summary.chatsDone', { title: c.title.replace(/^★\s*|…$/g, ''), n: r.count }) : '')
       : r.count ? t('summary.done', { title: c.title, count: plural(r.count), from: r.from }) : t('summary.quoted', { title: c.title });
     $('copy').hidden = !r.text;
+    $('agent').classList.toggle('hot', !!r.marks?.length);
   }
   // The picked chat, or the ticked ones under "Several chats" (their names make the title of the toast and the status line)
   function target() {
@@ -169,14 +173,17 @@
   }
   // Without AI the summary without AI is the main button, and the question and the AI's own summary go
   async function checkAi() {
-    const { ready, aiOff } = await bridge.invoke('status:get');
+    const status = await bridge.invoke('status:get'), ready = status.ready;
+    aiOff = !!status.aiOff;
     if (running) return;
     $('go').disabled = $('ask').disabled = !ready;
     $('go').hidden = $('question').parentElement.hidden = !ready;
     $('plain').classList.toggle('go', !ready);
-    $('handoff').hidden = !!aiOff; // "Do not use AI": not the AI sites either
+    $('handoff').hidden = aiOff; // "Do not use AI": not the AI sites either
+    digestPicked();
   }
   checkAi();
+  bridge.invoke('agents:list').then(list => { agentsFound = list.length > 0; digestPicked(); });
   window.addEventListener('focus', checkAi);
   $('go').onclick = () => (running ? bridge.invoke('summary:stop') : run());
   $('plain').onclick = () => (running ? bridge.invoke('summary:stop') : run(undefined, true));
@@ -192,6 +199,15 @@
     try { await bridge.invoke('summary:handoff', c.id, c.title, $('period').value, { ...c.ask, question: $('question').value.trim() || undefined }); $('status').textContent = t('summary.handoffDone'); }
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
     finally { $('handoff').disabled = false; $('spin').hidden = true; }
+  };
+  // "Look into it in the agent": this chat and period, with the talk so far, to the user's AI agent in the project folder
+  $('agent').onclick = async () => {
+    const c = target();
+    if (!c || c.id.length < 2) return;
+    $('agent').disabled = true; $('spin').hidden = false; $('status').className = ''; $('status').textContent = t('summary.reading', { title: c.title });
+    try { $('status').textContent = t('card.agentDone', { name: await bridge.invoke('summary:agent', c.id, c.title, $('period').value, { history: talk, question: $('question').value.trim() || undefined }) }); }
+    catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
+    finally { $('agent').disabled = false; $('spin').hidden = true; }
   };
   $('copy').onclick = async () => { await navigator.clipboard.writeText(talk.length ? talk.map(x => `${x.q}\n${x.a}`).join('\n\n') : $('out').textContent); $('copy').textContent = t('summary.copied'); setTimeout(() => ($('copy').textContent = t('summary.copy')), 1500); };
 </script>

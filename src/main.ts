@@ -12,7 +12,7 @@ import * as teams from './teams';
 import * as icon from './icon';
 import * as ai from './ai';
 import * as digest from './digest';
-import { byQuestion, cleanHandoffs, type Talk } from './handoff';
+import { agentPrompt, byQuestion, cleanHandoffs, findMarks, markNames, renderChat, writeHandoff, type ChatLine, type Talk } from './handoff';
 import * as agents from './agents';
 import { t } from './i18n';
 import * as i18n from './i18n';
@@ -371,7 +371,7 @@ handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPa
 // stay: no timeout, the card waits for the user's answer; gone: it closed without one of its actions
 // stack: the mentions of one channel, in one card without a reply (key: 'chan:' + the channel)
 type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; click?: () => void; gone?: () => void;
-  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean };
+  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean; agent: boolean; marks: string[] };
   stack?: { key: string; msgs: Msg[] } };
 let toastWin: BrowserWindow | null = null;
 let toastDraft: string | undefined; // the message card on screen: its draft, or its channel's stack key
@@ -826,7 +826,9 @@ handle('settings:close', () => closeSettings());
 // The panel's summary tab, with the chat picked; the user chooses the period and starts it. With a result: shows a summary
 // made already (the daily digest, or one that went on after the panel was closed). From the tray or a toast the window comes up.
 // talk: a question asked in a card goes on here — its period and the talk so far
-type Summary = { text: string; count: number; from: string };
+// marks: for one chat, what its messages carry for a look into code ("Look into it in the agent" stands out then)
+type Summary = { text: string; count: number; from: string; marks?: string[] };
+const marksOf = (msgs: { text: string }[]) => markNames(findMarks(msgs.map(m => m.text)));
 function showSummary(chatId?: string, result?: Summary, talk?: { period: string; history: Talk[] }) {
   if (!windowInUse()) showTeams();
   const page = openPanel('summary'), preset = { chatId, result, ...talk };
@@ -1126,8 +1128,9 @@ const windowAnswer = (chatId: string, title: string, period: string, ask: Ask, s
     if (settings.aiOff && !ask.plain) throw Object.assign(new Error(t('toast.aiOff')), { status: 403 }); // before reading: reading marks chats read
     const req = await windowRequest(chatId, title, period, ask, signal);
     if (!req) return { text: t(NONE[chatId] ?? 'sum.none'), count: 0, from: '' };
-    if (ask.plain) return { text: await plainSummary(req.parts, chatId.length === 1), count: req.count, from: req.from };
-    try { return { text: await askAi(req, 'summaryModel', signal, ask.auto), count: req.count, from: req.from }; }
+    const marks = chatId.length > 1 ? marksOf(req.parts.flatMap(p => p.msgs)) : undefined;
+    if (ask.plain) return { text: await plainSummary(req.parts, chatId.length === 1), count: req.count, from: req.from, marks };
+    try { return { text: await askAi(req, 'summaryModel', signal, ask.auto), count: req.count, from: req.from, marks }; }
     catch (e) { aiFailed(e); throw e; }
   });
 // The summary without AI (digest.ts): the user's name, from the self-chat's title, finds their mentions.
@@ -1316,7 +1319,7 @@ async function held(n: string) {
 function intoCard(key: string, msgs: Msg[]) {
   if (toastDraft !== key || !toastWin) return false;
   if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 60_000); } // not once the user is typing in it
-  const wc = toastWin.webContents, send = () => wc.send('toast:msgs', { n: key, msgs });
+  const wc = toastWin.webContents, send = () => wc.send('toast:msgs', { n: key, msgs, marks: marksOf(msgs) });
   if (wc.isLoading()) wc.once('did-finish-load', send); else send(); // a new card's page: after its own payload
   return true;
 }
@@ -1332,7 +1335,8 @@ function announce(n: string, why?: string) {
   // the card itself opens the chat; replying, Teams' quick reactions and the rest are in the card (ui/toast.html)
   toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => openInTeams(d.chatId),
     hint: why ?? (d.error ? t('toast.replyFailed') : ready ? t('toast.replyReady') : undefined),
-    reply: { n, variants: d.variants ?? [], ai: aiReady(), quick: quickReplies(), msgs, brief: aiReady() && !aiSkipped(d.title) },
+    reply: { n, variants: d.variants ?? [], ai: aiReady(), quick: quickReplies(), msgs, brief: aiReady() && !aiSkipped(d.title),
+      agent: !settings.aiOff && agents.detectAgents().length > 0, marks: marksOf(msgs) },
     actions: [{ label: `📝 ${t('act.summary')}`, run: () => showSummary(d.chatId) }] });
 }
 // ---------- calls and meetings ----------
@@ -1741,8 +1745,11 @@ async function checkActivity() {
     if (c && carded(key)) { c.msgs.push(msg); c.msgs.splice(0, c.msgs.length - 30); c.id = a.id; intoCard(key, c.msgs); continue; } // the last 30, as a chat's
     const card = { msgs: [msg], id: a.id };
     channelCards.set(key, card);
+    const toTheAgent = () => void toAgent({ title: a.where, msgs: card.msgs })
+      .then(name => toast({ title: t('card.agentDone', { name }), message: a.where }), e => toast({ title: a.where, message: errorText(e), tone: 'error' }));
     toast({ title: a.where, message: a.text, tone: 'accent', long: true, stack: { key, msgs: card.msgs }, click: () => openActivity(card.id),
-      actions: [{ label: t('act.openTeams'), run: () => openActivity(card.id) }] });
+      actions: [{ label: t('act.openTeams'), run: () => openActivity(card.id) },
+        ...(!settings.aiOff && agents.detectAgents().length ? [{ label: t('card.agent'), run: toTheAgent }] : [])] });
   }
   state.activitySeen.splice(200);
   saveState();
@@ -1882,6 +1889,73 @@ handle('draft:continue', (_e, n: string, talk: unknown) => {
   const d = state.drafts[String(n)], { q, a } = (talk ?? {}) as { q?: unknown; a?: unknown };
   if (d) showSummary(d.chatId, undefined, { period: 'q', history: [{ q: String(q ?? '').slice(0, 2000), a: String(a ?? '').slice(0, 2000) }] });
 });
+// "Look into it in the agent": the chat goes to the user's own AI agent (agents.ts), to look into with the project's code — its
+// messages for the period, their pictures as files, what they carry (ray-ids, stack traces, issue keys, file names) and the
+// questions asked about it here, in chat.md of a folder of its own (handoff.ts); the agent opens in the project folder with a
+// short request to read it. "Not to AI" holds as everywhere the AI reads. Returns the agent's name.
+// A channel's card has no chat to read: its messages go as they are.
+type AgentSource = { chatId: string; title: string; period: string; question?: string; history?: Talk[] } | { title: string; msgs: Msg[] };
+const PICTURE: Record<string, string> = { 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' };
+async function toAgent(src: AgentSource): Promise<string> {
+  if (settings.aiOff) throw new Error(t('toast.aiOff'));
+  const found = agents.detectAgents(), agent = found.find(a => a.id === settings.agent) ?? found[0];
+  if (!agent) throw new Error(t('err.noAgent'));
+  notToAi(src.title);
+  let dir = settings.projectDir;
+  if (settings.projectAsk || !dir || !fs.existsSync(dir)) { // before the chat is read: a cancel leaves it unread
+    const r = await dialog.showOpenDialog({ title: t('set.projectDir'), properties: ['openDirectory'], defaultPath: state.lastDir || dir || undefined });
+    if (r.canceled || !r.filePaths[0]) throw new Error(t('err.noDir'));
+    dir = r.filePaths[0];
+  }
+  const pictures: { name: string; data: Buffer }[] = [];
+  let lines: ChatLine[];
+  if ('msgs' in src) lines = src.msgs.filter(m => !m.who || !aiSkipped(m.who)).map(m => ({ author: m.who ?? src.title, mine: false, time: m.time, text: m.text, images: [] }));
+  else {
+    const { n = 500, gap, ...period } = range(src.period);
+    const { msgs, data } = await working(t('busy.handoff', { title: src.title }), () => inChat(src.chatId, async () => {
+      const all = await teams.history({ id: src.chatId, title: src.title }, Math.min(n, 500), { ...period, veil: t('veil.reading', { title: src.title }) })
+        .catch(e => { throw (e as { switched?: boolean }).switched ? new Error(t('err.chatSwitched')) : e; });
+      const msgs = forAi(gap ? byQuestion(all, gap) : all);
+      return { msgs, data: await teams.imageData(msgs.flatMap(m => m.images ?? [])) }; // while the chat is open: the pictures are its page's
+    }));
+    lines = msgs.map(m => ({ author: m.author || (m.mine ? 'Me' : 'Other'), mine: m.mine, time: when(m.id), text: m.text,
+      images: (m.images ?? []).map(() => { // '' for one Teams did not give
+        const d = data.shift();
+        if (!d) return '';
+        const name = `img-${pictures.length + 1}.${PICTURE[d.slice(5, d.indexOf(';'))] ?? 'jpg'}`;
+        pictures.push({ name, data: Buffer.from(d.slice(d.indexOf(',') + 1), 'base64') });
+        return name;
+      }) }));
+  }
+  if (!lines.length) throw new Error(t('sum.none'));
+  const marks = findMarks(lines.map(l => l.text)), question = 'msgs' in src ? undefined : src.question;
+  const md = renderChat({ header: t('agent.header'), title: src.title, period: 'msgs' in src ? '' : t(`summary.${src.period}`), lines, marks,
+    talk: 'msgs' in src ? [] : src.history ?? [], fence: crypto.randomBytes(8).toString('hex'), noImage: t('agent.noImage') });
+  const folder = writeHandoff(src.title, [{ name: 'chat.md', data: md }, ...pictures]);
+  try {
+    // t() empties the placeholders it is not given: they go through as they are, for agentPrompt to fill and clean
+    const template = t(question ? 'agent.promptAsk' : 'agent.prompt', { file: '{file}', question: '{question}' });
+    await agents.launch(agent.id, dir, agentPrompt(template, path.join(folder, 'chat.md'), question),
+      pictures.map(p => path.join(folder, p.name)));
+  } catch (e) { fs.rmSync(folder, { recursive: true, force: true }); throw e; }
+  state.lastDir = dir;
+  saveState();
+  log(`agent ${agent.id}: ${lines.length} messages, ${pictures.length} pictures, found ${markNames(marks).join('/') || 'nothing'}`);
+  return agent.name;
+}
+// From a card: by question, or the period picked under ▾
+handle('draft:agent', logged('agent', (_e, n: string, period: unknown) => {
+  const d = state.drafts[String(n)];
+  if (!d) throw new Error(t('err.handled'));
+  if (toastDraft === String(n)) { clearTimeout(toastGuard); toastGuard = undefined; } // the user waits on its card: it stays
+  return toAgent({ chatId: d.chatId, title: d.title, period: ['q', 'd0', 'd7', 'n50'].includes(String(period)) ? String(period) : 'q' });
+}));
+// From the summary tab: its chat and period, with the talk there; the last question asked is the agent's question
+handle('summary:agent', logged('summary agent', async (_e, chatId: string, title: string, period: string, ask: unknown) => {
+  const { question, history = [] } = askFrom(ask);
+  const real = (await serial(teams.chatList)).find(c => c.id === String(chatId)); // "Not to AI" goes by the chat's real name
+  return toAgent({ chatId: String(chatId), title: real?.title ?? String(title), period: String(period), question: question ?? history.at(-1)?.q, history });
+}));
 handle('draft:open', (_e, n: string) => state.drafts[n] && openInTeams(state.drafts[n].chatId));
 handle('draft:snooze', (_e, n: string, minutes: number) => snooze(String(n), [30, 60, 180, -1].includes(Number(minutes)) ? Number(minutes) : 60));
 handle('draft:reject',(_e, n: string) => { const d = state.drafts[n]; if (d?.status === 'pending') { d.status = 'rejected'; delete d.context; delete d.msgs; } draftsChanged(); });
