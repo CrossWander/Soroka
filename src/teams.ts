@@ -6,7 +6,8 @@ export const TEAMS_URL = 'https://teams.cloud.microsoft/';
 // preview: the last message as the chat list shows it ("Author: text" in group chats, cut by Teams); time: "16:33" today, a date before
 export type Chat = { id: string; title: string; preview: string; time: string; type: string; unread: boolean; mention: boolean };
 // replyTo, quote: a quoted reply's author and text, kept out of the message's own text
-export type Message = { id: string; author: string; mine: boolean; text: string; replyTo?: string; quote?: string };
+// images: the srcs of the message's pictures (not its emoji), for imageData
+export type Message = { id: string; author: string; mine: boolean; text: string; replyTo?: string; quote?: string; images?: string[] };
 type ChatRef = Pick<Chat, 'id' | 'title'>;
 
 export const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
@@ -594,9 +595,31 @@ export const lastMessages = (n: number): Promise<Message[]> => run(n => {
     const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
     const quote = card && { replyTo: flat((card.querySelector('[data-tid="quoted-reply-timestamp"]')?.previousElementSibling as HTMLElement | null)?.innerText ?? ''),
       quote: flat((card.querySelector('[data-tid="quoted-reply-preview-content"]') as HTMLElement | null)?.innerText ?? '') };
-    return { id: mid, author, mine: m.className.includes('ChatMyMessage'), text: flat(box ? content.innerText.replace(box.innerText, '') : content.innerText), ...quote };
+    // pictures pasted in a chat: AMSImage, a blob: src (seen live 2026-11-13); emoji are pictures too and stay out
+    const images = [...content.querySelectorAll('img')].filter(i => i.src && !box?.contains(i) && !/\/emoticons\//.test(i.src) && !/Emoji/i.test(i.getAttribute('itemtype') || ''))
+      .map(i => i.src);
+    return { id: mid, author, mine: m.className.includes('ChatMyMessage'), text: flat(box ? content.innerText.replace(box.innerText, '') : content.innerText), ...quote,
+      ...(images.length ? { images } : {}) };
   }).filter(m => m.id).slice(-n);
 }, n);
+// The pictures as data URLs, read by the Teams page itself: its own blob: copy, else the picture it shows already, drawn
+// out of it; null for one it cannot give (gone from the page, or another site's without CORS). No token leaves Teams.
+export const imageData = (srcs: string[]): Promise<(string | null)[]> => run(srcs => Promise.all((srcs as string[]).map(async src => {
+  try {
+    const b = await (await fetch(src)).blob();
+    if (!b.type.startsWith('image/') || b.size > 10_000_000) return null; // ponytail: 10 MB a picture
+    return await new Promise<string>((ok, no) => { const f = new FileReader(); f.onload = () => ok(String(f.result)); f.onerror = no; f.readAsDataURL(b); });
+  } catch {
+    const img = [...document.querySelectorAll('img')].find(i => i.src === src && i.complete && i.naturalWidth);
+    if (!img) return null;
+    try {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d')!.drawImage(img, 0, 0);
+      return c.toDataURL('image/png');
+    } catch { return null; }
+  }
+})), srcs);
 
 // Up to n latest messages, newer than `since` (epoch ms) or, with afterMine, after the user's own last message:
 // Teams keeps only a window of them in the page, so scroll up and collect until enough, no more, or stopped.
