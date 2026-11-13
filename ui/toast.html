@@ -97,8 +97,9 @@
 <body>
   <div class="card" id="card">
     <img id="icon" alt="">
-    <div><div class="title" id="title"></div><div class="subline" id="subline" hidden><span class="sub" id="sub"></span><button class="link brief" id="brief" data-i18n="card.brief" hidden></button></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div>
-      <div class="sum" id="sum" hidden><div class="head" id="sum-head"></div><div id="sum-text"></div><button class="link" id="show-all" data-i18n="card.showAll"></button></div><div class="hint" id="hint"></div></div>
+    <div><div class="title" id="title"></div><div class="subline" id="subline" hidden><span class="sub" id="sub"></span><button class="link brief" id="brief" data-i18n="card.brief" hidden></button><button class="link brief" id="ask-open" data-i18n="card.ask" hidden></button></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div>
+      <div class="reply" id="askbox" hidden><input id="ask-field" maxlength="500" data-i18n-placeholder="card.askPh"><button class="send" id="ask-send" data-i18n-title="card.send">➤</button></div>
+      <div class="sum" id="sum" hidden><div class="head" id="sum-head"></div><div id="sum-text"></div><button class="link" id="show-all" data-i18n="card.showAll"></button><button class="link brief" id="continue" data-i18n="card.continue" hidden></button></div><div class="hint" id="hint"></div></div>
     <button class="close" id="close">✕</button>
     <div class="actions" id="actions"></div>
     <div class="reply" id="reply" hidden>
@@ -148,9 +149,10 @@
     const many = msgs.length > 1 || !!msgs[0]?.who || (msgs.length === 1 && (cut(msgs[0]) || msgs[0].text.length > 100));
     $('talk').hidden = !many; $('message').hidden = many; $('sum').hidden = true;
     $('brief').hidden = !(briefOk && msgs.length >= 4);
-    $('brief').title = msgs.some(cut) ? t('card.briefRead') : ''; // the cut ones are read whole first
+    $('brief').title = $('ask-open').title = msgs.some(cut) ? t('card.briefRead') : ''; // the cut ones are read whole first
+    $('ask-open').hidden = !(briefOk && n && msgs.length); // a question about a chat's messages: not for a channel's card
     $('sub').textContent = msgs.length > 1 ? plural(msgs.length) : '';
-    $('subline').hidden = msgs.length < 2;
+    $('subline').hidden = msgs.length < 2 && $('ask-open').hidden;
     if (!many) return;
     const people = [...new Set(msgs.map(m => m.who).filter(Boolean))]; // the colours by who wrote first, earlier ones too
     const from = all ? 0 : Math.max(0, msgs.length - 3), runs = [];
@@ -203,9 +205,34 @@
       showMsgs(r.msgs); // whole now, for "Show them all"
       $('sum-head').textContent = t('card.briefHead', { count: plural(r.msgs.length) });
       $('sum-text').textContent = r.text;
-      $('sum').hidden = false; $('talk').hidden = true; $('brief').hidden = true;
+      $('sum').hidden = false; $('talk').hidden = true; $('brief').hidden = true; $('continue').hidden = true;
     });
   };
+  // "Ask": a question about the card's messages, answered in it; "Carry on in Summary" takes question and answer there.
+  // The field takes the keyboard (once) and holds the card, as the reply field does.
+  let asked = null;
+  $('ask-open').onclick = async e => {
+    e.stopPropagation();
+    $('askbox').hidden = false; await fit();
+    replying = true; clearTimeout(timer); stillHere();
+    if (!keys) { keys = true; await bridge.invoke('toast:focus'); }
+    $('ask-field').focus();
+  };
+  function ask() {
+    const q = $('ask-field').value.trim();
+    if (!q) return $('ask-field').focus();
+    request('card.asking', () => bridge.invoke('draft:ask', n, q), r => {
+      asked = { q, a: r.text };
+      showMsgs(r.msgs);
+      $('sum-head').textContent = t('card.answerHead');
+      $('sum-text').textContent = r.text;
+      $('sum').hidden = false; $('talk').hidden = true; $('continue').hidden = false; $('ask-field').value = '';
+    });
+  }
+  $('ask-send').onclick = e => { e.stopPropagation(); ask(); };
+  $('ask-field').onkeydown = e => { if (e.key === 'Enter') ask(); };
+  $('askbox').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
+  $('continue').onclick = e => { e.stopPropagation(); if (asked) bridge.invoke('draft:continue', n, asked); };
   $('show-all').onclick = e => { e.stopPropagation(); all = true; showMsgs(msgsNow); fit(); };
   $('sum').onclick = e => e.stopPropagation(); // reading it is not "open the chat"
 
@@ -215,7 +242,7 @@
     $('icon').src = t.icon;
     $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
     $('message').textContent = t.message || '';
-    briefOk = !!t.reply?.brief; all = false;
+    briefOk = !!t.reply?.brief; all = false; asked = null; $('askbox').hidden = true; $('ask-field').value = '';
     n = t.reply?.n ?? null; key = n ?? t.stack?.key ?? null;
     showMsgs(t.reply?.msgs ?? t.stack?.msgs ?? []);
     say(t.hint || '');
