@@ -906,7 +906,8 @@ async function windowSummary(page: Electron.WebContents, chatId: string, title: 
     if (!ask.question && chatId !== '+') remember(chatId, r); // an answer, or a pick of chats, is not "the last summary" of anything
     log(`${what} ${title}: ${r.count} ${chatId.length === 1 ? 'chats' : 'messages'}`);
     if (unseen()) toast({ title: t(ask.question ? 'toast.answerReady' : 'toast.summaryReady', { title }), message: r.text.replace(/\s+/g, ' ').slice(0, 160),
-      tone: 'accent', long: true, click: () => showSummary(chatId, r) });
+      tone: 'accent', long: true, click: () => (ask.question // an answer opens with the talk it belongs to, a follow-up goes with it
+        ? showSummary(chatId, undefined, { period, history: [...(ask.history ?? []), { q: ask.question, a: r.text }] }) : showSummary(chatId, r)) });
     return r;
   } catch (e) {
     log(`${what} ${title}:`, run.signal.aborted ? 'stopped' : errorText(e));

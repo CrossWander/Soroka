@@ -68,7 +68,7 @@
   const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   // talk: the questions asked about this chat and period, and the answers; a follow-up goes with them. Another chat, another
   // period or a summary starts it over.
-  let chats = [], preset = null, running = false, talk = [], aiOff = false, agentsFound = false;
+  let chats = [], preset = null, running = false, talk = [], aiOff = false, agentsFound = false, agentBusy = false;
   function showTalk() {
     $('out').replaceChildren(...talk.flatMap(x => [Object.assign(document.createElement('div'), { className: 'q', textContent: x.q }),
       Object.assign(document.createElement('div'), { className: 'a', textContent: x.a })]));
@@ -104,8 +104,10 @@
     $('pick').hidden = v !== '+'; $('pick').disabled = running;
     $('ask').disabled = running || $('go').disabled;
     $('agent').hidden = aiOff || !agentsFound || v.length < 2; // one chat only
+    $('agent').disabled = running || agentBusy;
   };
-  $('chat').onchange = () => { talk = []; digestPicked(); showLast(); };
+  // another chat: the user's own period again, not "by question" a card's question left
+  $('chat').onchange = () => { talk = []; try { $('period').value = localStorage.getItem('period') || 'd7'; } catch { /* the default stays */ } digestPicked(); showLast(); };
   // The last summary of the picked chat, kept by the app: one that finished while the window was out of sight is not lost
   async function showLast() {
     const c = chats.find(x => x.id === $('chat').value);
@@ -121,8 +123,8 @@
   // (the daily digest, or a summary that went on after its window was closed).
   function apply() {
     if (!preset || !chats.length) return false;
+    if (running) return true; // a run is on screen: the preset waits for it to end (run's finally)
     const p = preset; preset = null;
-    if (running) return true; // a run is on screen: the window only comes to the front
     if (p.chatId) $('chat').value = p.chatId;
     if (p.period) $('period').value = p.period; // a card's question: by question, not remembered as the user's choice
     digestPicked();
@@ -169,7 +171,7 @@
       if (question) $('question').value = '';
     }
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
-    finally { running = false; $('spin').hidden = true; mine.classList.remove('running'); $('plain').disabled = false; $('chat').disabled = false; digestPicked(); checkAi(); }
+    finally { running = false; $('spin').hidden = true; mine.classList.remove('running'); $('plain').disabled = false; $('chat').disabled = false; digestPicked(); checkAi(); apply(); }
   }
   // Without AI the summary without AI is the main button, and the question and the AI's own summary go
   async function checkAi() {
@@ -204,10 +206,10 @@
   $('agent').onclick = async () => {
     const c = target();
     if (!c || c.id.length < 2) return;
-    $('agent').disabled = true; $('spin').hidden = false; $('status').className = ''; $('status').textContent = t('summary.reading', { title: c.title });
+    agentBusy = $('agent').disabled = true; $('spin').hidden = false; $('status').className = ''; $('status').textContent = t('summary.reading', { title: c.title });
     try { $('status').textContent = t('card.agentDone', { name: await bridge.invoke('summary:agent', c.id, c.title, $('period').value, { history: talk, question: $('question').value.trim() || undefined }) }); }
     catch (e) { $('status').className = 'error'; $('status').textContent = errorText(e); }
-    finally { $('agent').disabled = false; $('spin').hidden = true; }
+    finally { agentBusy = false; $('agent').disabled = running; $('spin').hidden = true; }
   };
   $('copy').onclick = async () => { await navigator.clipboard.writeText(talk.length ? talk.map(x => `${x.q}\n${x.a}`).join('\n\n') : $('out').textContent); $('copy').textContent = t('summary.copied'); setTimeout(() => ($('copy').textContent = t('summary.copy')), 1500); };
 </script>
