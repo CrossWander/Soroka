@@ -920,7 +920,8 @@ let aiInfo: ai.Info[] = [];
 const aiReady = () => usable().length > 0;
 const mode = () => (aiReady() ? settings.wakeMode : 'notify');
 async function refreshAi() {
-  aiInfo = settings.aiOff ? [] : await ai.detect();
+  const found = settings.aiOff ? [] : await ai.detect();
+  aiInfo = settings.aiOff ? [] : found; // "Do not use AI" switched on while it looked
   // an AI ready for the first time lists its models at once; Claude Code's come from "Refresh", which spends a little
   const fresh = aiInfo.filter(i => i.ready && i.id !== 'claude' && !Object.keys(state.models).some(m => ai.providerOf(m) === i.id)).map(i => i.id);
   if (fresh.length) await checkModels(fresh).catch(e => log('models:', errorText(e)));
