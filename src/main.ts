@@ -1631,12 +1631,12 @@ function remind() {
   if (quiet()) return; // they wait for the quiet hours to end
   // what came in the quiet hours, now they are over: one card, or one for all of them
   const hushed = waiting().filter(([, d]) => d.hushed);
-  for (const [, d] of hushed) delete d.hushed;
+  for (const [, d] of hushed) { delete d.hushed; d.at = Date.now(); } // "still waiting for your answer" counts from now, not from the night
   if (hushed.length === 1) announce(hushed[0][0]);
   else if (hushed.length) toast({ title: t('toast.hushed', { n: hushed.length }), message: [...new Set(hushed.map(([, d]) => d.title))].join(', '), tone: 'accent', long: true, click: () => showDrafts(true) });
   if (hushed.length) saveState();
   for (const [n, d] of waiting()) {
-    if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; draftsChanged(); announce(n, t('toast.snoozed')); continue; }
+    if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; d.reminded = true; draftsChanged(); announce(n, t('toast.snoozed')); continue; } // not "awaiting" right after
     if (d.incoming && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
       d.reminded = true; saveState(); announce(n, t('toast.awaiting'));
     }
