@@ -49,6 +49,8 @@ const S: Record<string, [string, string, string]> = {
   'toast.teamsLogin': ['Потрібно увійти в Teams', 'Sign in to Teams', 'Нужно войти в Teams'],
   'toast.teamsLoginText': ['Сесія завершилася — сповіщення й відповіді чекають на вхід.', 'The session ended: notifications and replies wait for you to sign in.', 'Сессия закончилась — уведомления и ответы ждут входа.'],
   'toast.teamsLoginHint': ['Натисніть, щоб увійти', 'Click to sign in', 'Нажмите, чтобы войти'],
+  'toast.teamsOffline': ['Teams не завантажується', 'Teams does not load', 'Teams не загружается'],
+  'toast.teamsOfflineText': ['Мабуть, немає мережі. Soroka пробує знову кожні 5 хвилин; F5 — одразу.', 'Maybe the network is away. Soroka tries again every 5 minutes; F5 tries now.', 'Видимо, нет сети. Soroka пробует снова каждые 5 минут; F5 — сразу.'],
   'toast.aiLogin': ['Потрібно увійти в {name}', 'Sign in to {name}', 'Нужно войти в {name}'],
   'toast.noAnswer': ['{title}: немає відповіді на ваше питання', '{title}: no answer to your question', '{title}: нет ответа на ваш вопрос'],
   'act.nudge': ['Нагадати', 'Nudge', 'Напомнить'],

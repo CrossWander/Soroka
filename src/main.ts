@@ -315,14 +315,15 @@ const ACTIONS: Record<string, () => void> = {
   summary: () => void summaryHere(),
   improve: () => (aiReady() ? void improveHere() : explainAi()),
   drafts: () => (panelTab ? closePanel() : showDrafts()), // ▤ in the title bar
-  refresh: () => void serial(() => connect(false)),
+  // while Teams does not load, F5 loads it again at once; one reload waiting in the queue is enough
+  refresh: () => { if (connecting) reloadNow = true; else void serial(() => connect(false)); },
   settings: () => (settingsView ? closeSettings() : showSettings()), // ⚙ in the title bar, like ▤
 };
 const HOTKEYS: Record<string, string> = { 'Ctrl+Shift+KeyS': 'summary', 'Ctrl+Shift+KeyR': 'suggest', 'Ctrl+Shift+KeyI': 'improve', F5: 'refresh' }; // Ctrl+Shift+E is Teams' screen sharing
 // by physical key (code), so the hotkeys work in any keyboard layout
 function hotkey(e: Electron.Event, i: Electron.Input) {
   const name = i.type === 'keyDown' && HOTKEYS[`${i.control || i.meta ? 'Ctrl+' : ''}${i.alt ? 'Alt+' : ''}${i.shift ? 'Shift+' : ''}${i.code}`];
-  if (name) { e.preventDefault(); ACTIONS[name](); }
+  if (name) { e.preventDefault(); if (!i.isAutoRepeat) ACTIONS[name](); } // a held key: once
 }
 handle('strip:get', stripState);
 handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
@@ -719,21 +720,38 @@ async function summaryHere() {
 // Loads Teams. Without a session it waits for sign-in: at start it opens the window for it, later it only asks with a toast.
 // Teams stuck on its own pages (an error page, a load that never ends) is loaded again, up to 3 times; another site is a
 // sign-in (Microsoft's or the company's own), and waits for the user. A reload keeps the chat the user was in.
+// No network (the page failed to load, or Windows says offline): said once, and loaded again every 5 minutes for as long
+// as it lasts. F5 loads it at once, and does not count.
+let connecting = false, reloadNow = false;
 async function connect(openForLogin: boolean) {
   const keep = status === 'ready' && windowInUse() ? await teams.currentChatId().catch(() => undefined) : undefined;
   status = 'starting'; refreshTray();
-  const load = async () => { await teamsPage.loadURL(teams.TEAMS_URL).catch(() => {}); await teams.emulateFocus().catch(() => {}); }; // Teams redirects while loading
-  await load();
-  let opened = false, reloads = 0;
-  for (let end = Date.now() + 90_000; !(await teams.ready(2000));) {
-    const url = teamsPage.getURL(), late = Date.now() > end;
-    if (late && TEAMS_PAGE.test(url) && reloads < 3) { reloads++; log(`teams did not load: loading again (${reloads})`); await load(); end = Date.now() + 90_000; continue; }
-    if (status === 'login' || !(/^https:\/\/login\./.test(url) || late)) continue;
-    status = 'login'; refreshTray();
-    if (openForLogin && !teamsWin.isVisible()) { opened = true; showTeams(); }
-    else toast({ title: t('toast.teamsLogin'), message: t('toast.teamsLoginText'), hint: t('toast.teamsLoginHint'), tone: 'error', long: true, click: showTeams });
-  }
-  if (opened) teamsWin.hide();
+  let failed = false; // Teams redirects while loading: an aborted load is no failure
+  const load = async () => {
+    failed = false;
+    await teamsPage.loadURL(teams.TEAMS_URL).catch(e => { failed = (e as { code?: string }).code !== 'ERR_ABORTED'; });
+    await teams.emulateFocus().catch(() => {});
+  };
+  const offline = () => failed || !net.isOnline();
+  connecting = true;
+  try {
+    await load();
+    let opened = false, reloads = 0, told = false;
+    for (let end = Date.now() + 90_000; !(await teams.ready(2000));) {
+      const url = teamsPage.getURL(), late = Date.now() > end, own = TEAMS_PAGE.test(url) || !/^https?:/.test(url);
+      if (own && (reloadNow || (late && (reloads < 3 || offline())))) {
+        if (reloadNow) reloadNow = false; else reloads++;
+        if (reloads >= 3 && offline() && !told) { told = true; toast({ title: t('toast.teamsOffline'), message: t('toast.teamsOfflineText'), tone: 'error', long: true }); }
+        log(`teams did not load: loading again (${reloads})`); await load(); end = Date.now() + (reloads >= 3 && offline() ? 5 * 60_000 : 90_000); continue;
+      }
+      if (!own) reloadNow = false; // F5 on a sign-in page: no reload right after the sign-in
+      if (status === 'login' || !(/^https:\/\/login\./.test(url) || late)) continue;
+      status = 'login'; refreshTray();
+      if (openForLogin && !teamsWin.isVisible()) { opened = true; showTeams(); }
+      else toast({ title: t('toast.teamsLogin'), message: t('toast.teamsLoginText'), hint: t('toast.teamsLoginHint'), tone: 'error', long: true, click: showTeams });
+    }
+    if (opened) teamsWin.hide();
+  } finally { connecting = false; reloadNow = false; }
   await watch();
   if (keep) await teams.openChat({ id: keep, title: keep }).catch(() => {});
   status = 'ready'; refreshTray();
