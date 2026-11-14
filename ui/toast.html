@@ -23,6 +23,8 @@
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .title.accent { color: var(--accent); } .title.error { color: var(--error); }
   .message { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  /* the text to confirm (a Claude session's send): all of it, lines kept, scrolling past 260 px */
+  .message.full { display: block; -webkit-line-clamp: unset; white-space: pre-wrap; max-height: 260px; overflow-y: auto; cursor: default; scrollbar-width: thin; }
   .sub { color: var(--muted); font-size: 12px; }
   .sub:empty { display: none; }
   /* a chat's messages as they came: one person's in a row as one run, the author over it in a group, the time under it */
@@ -269,7 +271,7 @@
     clearTimeout(leaving);
     $('icon').src = t.icon;
     $('title').textContent = t.title; $('title').className = 'title ' + (t.tone || '');
-    $('message').textContent = t.message || '';
+    $('message').textContent = t.message || ''; $('message').classList.toggle('full', !!t.full);
     briefOk = !!t.reply?.brief; all = false; asked = null; $('askbox').hidden = true; $('ask-field').value = '';
     n = t.reply?.n ?? null; key = n ?? t.stack?.key ?? null;
     showMsgs(t.reply?.msgs ?? t.stack?.msgs ?? []);
@@ -396,6 +398,7 @@
   $('m-later').onclick = e => { e.stopPropagation(); bridge.invoke('draft:snooze', n, 60); leave(); };
 
   card.onmouseenter = () => clearTimeout(timer); // the user is reading or reaching for it
+  $('message').onclick = e => { if ($('message').classList.contains('full')) e.stopPropagation(); }; // scrolling the text is no answer
   card.onmouseleave = () => { if (!menuOpen()) arm(); };
   card.onclick = () => act(-1);
   $('close').onclick = e => { e.stopPropagation(); leave(); };

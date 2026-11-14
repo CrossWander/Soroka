@@ -375,7 +375,8 @@ handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPa
 // reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
 // stay: no timeout, the card waits for the user's answer; gone: it closed without one of its actions
 // stack: the mentions of one channel, in one card without a reply (key: 'chan:' + the channel)
-type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; click?: () => void; gone?: () => void;
+// full: the whole message, lines kept (a text to confirm)
+type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; full?: boolean; click?: () => void; gone?: () => void;
   actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean; agent: boolean; marks: string[] };
   stack?: { key: string; msgs: Msg[] } };
 let toastWin: BrowserWindow | null = null;
@@ -385,9 +386,9 @@ let toastHandlers: ((() => void) | undefined)[] = [], toastGone: (() => void) | 
 // One card at a time: a newer one waits its turn instead of wiping out the one on screen. A burst past 5 waiting comes as
 // one card counting the rest: they are in the tray's recent ones, and the messages in "Replies".
 const toastQueue: Toast[] = [];
-let toastOn = false, toastGuard: NodeJS.Timeout | undefined, toastMissed = 0;
+let toastOn = false, toastGuard: NodeJS.Timeout | undefined, toastMissed = 0, toastNow: Toast | undefined;
 function nextToast() {
-  toastOn = false; clearTimeout(toastGuard); toastDraft = undefined;
+  toastOn = false; clearTimeout(toastGuard); toastDraft = undefined; toastNow = undefined;
   const gone = toastGone; toastGone = undefined; gone?.();
   let next = toastQueue.shift();
   if (!next && toastMissed) { next = { title: t('toast.more', { n: toastMissed }), message: t('toast.moreText'), long: true, click: () => showDrafts(true) }; toastMissed = 0; }
@@ -402,7 +403,7 @@ function toast(item: Toast, fromQueue = false) {
     refreshTray();
   }
   if (toastOn) { if (toastQueue.length < 5 || item.stay) toastQueue.push(item); else toastMissed++; return; } // a question to the user is never dropped
-  toastOn = true; toastDraft = item.reply?.n ?? item.stack?.key;
+  toastOn = true; toastDraft = item.reply?.n ?? item.stack?.key; toastNow = item;
   if (!item.stay) toastGuard = setTimeout(nextToast, 60_000); // the card never reported back (its page crashed): don't block the rest
   const { click, long, stay, gone, actions = [], ...card } = item;
   toastHandlers = [click, ...actions.map(a => a.run)];
@@ -447,9 +448,15 @@ function confirmSend(title: string, text: string) {
   return new Promise<boolean>(ok => {
     let done = false;
     const answer = (yes: boolean) => { if (!done) { done = true; clearTimeout(timer); ok(yes); } };
-    const timer = setTimeout(() => answer(false), 3 * 60_000);
-    toast({ title: t('toast.claudeSends', { title }), message: text, tone: 'accent', stay: true, gone: () => answer(false),
-      actions: [{ label: t('act.send'), run: () => answer(true) }, { label: t('act.dontSend'), run: () => answer(false) }] });
+    const card: Toast = { title: t('toast.claudeSends', { title }), message: text, tone: 'accent', stay: true, full: true, gone: () => answer(false),
+      actions: [{ label: t('act.send'), run: () => answer(true) }, { label: t('act.dontSend'), run: () => answer(false) }] };
+    // no answer in time: its card goes too, on screen or still waiting its turn (a click on it now would send nothing)
+    const timer = setTimeout(() => {
+      answer(false);
+      const i = toastQueue.indexOf(card);
+      if (i >= 0) toastQueue.splice(i, 1); else if (toastNow === card) toastWin?.close();
+    }, 3 * 60_000);
+    toast(card);
   });
 }
 
