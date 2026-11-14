@@ -426,6 +426,8 @@ handle('toast:size', (_e, height: number) => { // the card measured itself: sit 
 });
 // the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
 handle('toast:focus', () => { clearTimeout(toastGuard); toastGuard = undefined; toastWin?.setFocusable(true); toastWin?.focus(); });
+// the mouse on the card: the user is reading it, the next card does not take its place after the minute
+handle('toast:hold', () => { if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 10 * 60_000); } });
 // the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
 // and its page drew nothing until shown again, so a card sent to it never came up.
 // a closing card takes no more messages: the next one of its chat comes in a card of its own

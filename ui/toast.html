@@ -244,11 +244,11 @@
       stillHere(); // two minutes to read it
     });
   }
-  $('ask-field').oninput = stillHere; // typing the question: the card stays
+  $('ask-field').oninput = () => { replying = true; clearTimeout(timer); stillHere(); }; // typing the question: the card stays
   $('ask-send').onclick = e => { e.stopPropagation(); ask(); };
   $('ask-field').onkeydown = e => { if (e.key === 'Enter') ask(); };
   $('askbox').onclick = e => e.stopPropagation(); // clicks in the field are not "open the chat"
-  $('continue').onclick = e => { e.stopPropagation(); if (asked) bridge.invoke('draft:continue', n, asked); };
+  $('continue').onclick = e => { e.stopPropagation(); if (asked) { bridge.invoke('draft:continue', n, asked); leave(); } }; // the talk goes on there
   // "Look into it in the agent": the chat, by question or the period under ▾, goes to the user's AI agent in the project folder
   async function toAgent(period) {
     $('agent-menu').hidden = true;
@@ -347,9 +347,12 @@
   bridge.on('toast:msgs', v => {
     if (v.n !== key) return;
     clearTimeout(leaving); card.classList.remove('leaving'); card.classList.add('shown'); // it was just going: it stays
+    const answer = !$('sum').hidden; // the brief or the answer the user is reading stays; "Show them all" has the new one
     showMsgs(v.msgs, 1); // one message at a time
+    if (answer) { $('sum').hidden = false; $('talk').hidden = true; }
     showMarks(v.marks);
     variants = []; next = 0;
+    if (card.matches(':hover')) bridge.invoke('toast:hold'); // the app set its minute again: still being read
     fit();
     if (!replying && !menuOpen() && !card.matches(':hover')) arm();
   });
@@ -397,7 +400,8 @@
   $('m-react').onclick = e => { e.stopPropagation(); bridge.invoke('react:open', n); leave(); };
   $('m-later').onclick = e => { e.stopPropagation(); bridge.invoke('draft:snooze', n, 60); leave(); };
 
-  card.onmouseenter = () => clearTimeout(timer); // the user is reading or reaching for it
+  // the user is reading or reaching for it; the app does not take it for a dead card meanwhile
+  card.onmouseenter = () => { clearTimeout(timer); bridge.invoke('toast:hold'); };
   $('message').onclick = e => { if ($('message').classList.contains('full')) e.stopPropagation(); }; // scrolling the text is no answer
   card.onmouseleave = () => { if (!menuOpen()) arm(); };
   card.onclick = () => act(-1);
