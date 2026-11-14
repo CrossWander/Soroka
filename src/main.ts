@@ -74,7 +74,7 @@ let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftMo
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
   muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false,
-  agent: '', projectDir: '', projectAsk: false, handoffKeep: '1' });
+  agent: '', projectDir: '', projectAsk: false, handoffKeep: '24' }); // a day: a request left in the agent's field still finds its chat.md
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
 const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.length <= max;
@@ -1290,7 +1290,7 @@ async function installUpdate(url: string, version: string) {
 setTimeout(() => void checkUpdate(), 60_000);
 setInterval(() => void checkUpdate(), 86_400_000);
 // The files handed over to an agent go once their time is up: at start and every hour.
-const cleanHandoff = () => cleanHandoffs(Number(settings.handoffKeep) * 3_600_000);
+const cleanHandoff = () => cleanHandoffs((Number(settings.handoffKeep) || 24) * 3_600_000); // a broken value: a day, not "never"
 cleanHandoff();
 setInterval(cleanHandoff, 3_600_000);
 
@@ -1989,7 +1989,7 @@ type AgentSource = { chatId: string; title: string; period: string; question?: s
 // The agent chosen in the settings; none chosen (or it is gone): the first one that only fills the request in — one that sends
 // at once only when the user chose it
 const pickAgent = () => { const found = agents.detectAgents(); return found.find(a => a.id === settings.agent) ?? found.find(a => !a.now); };
-const PICTURE: Record<string, string> = { 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' };
+const PICTURE: Record<string, string> = { 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp', 'image/svg+xml': 'svg', 'image/avif': 'avif' };
 async function toAgent(src: AgentSource): Promise<string> {
   if (settings.aiOff) throw new Error(t('toast.aiOff'));
   const agent = pickAgent();

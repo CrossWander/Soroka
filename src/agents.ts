@@ -15,8 +15,11 @@ const extension = (prefix: string) => {
   try { return fs.readdirSync(path.join(os.homedir(), '.vscode', 'extensions')).some(d => d.startsWith(prefix)); } catch { return false; }
 };
 
-// The agents of this computer: a program on PATH, a VS Code extension, the handler of a link.
+// The agents of this computer: a program on PATH, a VS Code extension, the handler of a link. Looked up once a minute:
+// every message card asks (its "↗ Agent"), and a look walks PATH.
+let known: { at: number; list: Agent[] } | undefined;
 export function detectAgents(): Agent[] {
+  if (known && Date.now() - known.at < 60_000) return known.list;
   const code = !!onPath(['code']);
   const all: [AgentId, string, boolean, boolean][] = [
     ['claude-vscode', 'Claude Code · VS Code', false, code && extension('anthropic.claude-code-')],
@@ -27,7 +30,8 @@ export function detectAgents(): Agent[] {
     ['copilot', 'GitHub Copilot · VS Code', false, code && extension('github.copilot-chat-')],
     ['cursor', 'Cursor', false, !!onPath(['cursor'])],
   ];
-  return all.filter(a => a[3]).map(([id, name, now]) => ({ id, name, now }));
+  known = { at: Date.now(), list: all.filter(a => a[3]).map(([id, name, now]) => ({ id, name, now })) };
+  return known.list;
 }
 
 // The terminal agents and their cautious mode: they start on the request at once. Claude Code plans: it only reads until the
@@ -40,11 +44,12 @@ const TERMINAL: Partial<Record<AgentId, [string, string[]]>> = {
 
 // cmd.exe starts them: the `.cmd` launchers need it, and `start` gives a terminal agent a window of its own (Windows
 // Terminal's where that is the default terminal). No argument holds a `"`: Windows paths cannot, agentPrompt swaps it out.
-// ponytail: cmd expands a %NAME% of an existing variable in the request; a question naming one is rare
-const q = (s: string) => `"${s}"`;
+// ponytail: cmd expands a %NAME% of an existing variable in the request; a question naming one is rare. "!" it does not (/v:off).
+// A trailing "\" is doubled: `"C:\"` would read as an escaped quote.
+const q = (s: string) => `"${s.replace(/\\+$/, m => m + m)}"`;
 const cmd = (line: string) => new Promise<void>((ok, no) => {
-  spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', q(line)], { windowsVerbatimArguments: true, windowsHide: true, stdio: 'ignore' })
-    .on('error', no).on('exit', () => ok());
+  spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/v:off', '/s', '/c', `"${line}"`], { windowsVerbatimArguments: true, windowsHide: true, stdio: 'ignore' })
+    .on('error', no).on('exit', code => (code ? no(new Error(`cmd: exit code ${code}`)) : ok())); // a folder gone: start fails
 });
 const link = (base: string, params: Record<string, string>) => `${base}?${Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
 

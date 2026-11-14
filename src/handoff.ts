@@ -15,6 +15,9 @@ const PATTERNS: Record<keyof Marks, RegExp[]> = {
   jira: [/\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b/g],
   code: [/\b[\w.-]+\.(?:cs|ts|js|proto|sql|xaml|json)\b/g],
 };
+// what looks like an issue key or a file and is not: UTF-8, SHA-256, RFC-7231…; Node.js, Vue.js…
+const NOT_JIRA = /^(UTF|SHA|ISO|AES|RSA|RFC|TLS|SSL|HTTP|HTTPS|IPV|CVE|MD|UTC|GMT|ECMA|IEC|DES)-/;
+const NOT_CODE = /^(node|vue|next|nuxt|express|three|chart|d3|ember|backbone|moment|socket\.io)\.js$/i;
 export function findMarks(texts: string[]): Marks {
   const out: Marks = { ray: [], stack: [], jira: [], code: [] };
   for (const text of texts) {
@@ -23,7 +26,8 @@ export function findMarks(texts: string[]): Marks {
       for (const re of PATTERNS[kind])
         for (const m of text.matchAll(re)) {
           const value = m[1] ?? m[0];
-          if (kind === 'jira' && guids.some(g => g.includes(value))) continue; // a piece of a GUID, not an issue key
+          if (kind === 'jira' && (guids.some(g => g.includes(value)) || NOT_JIRA.test(value))) continue; // a piece of a GUID, not an issue key
+          if (kind === 'code' && NOT_CODE.test(value)) continue;
           if (!out[kind].includes(value)) out[kind].push(value);
         }
   }
@@ -48,7 +52,7 @@ export function renderChat(o: { header: string; title: string; period: string; l
   // the chat's name is set by its members: inside the fence, with the messages, not up with Soroka's own words
   const block = [
     `Chat: ${o.title}`, ...(o.period ? [`Period: ${o.period}`] : []), '',
-    ...o.lines.map(l => `[${l.time}] ${l.author}${l.mine ? ' (me)' : ''}: ${l.text}${l.images.map(f => ` ${f ? `[${f}]` : o.noImage}`).join('')}`),
+    ...o.lines.map(l => `[${l.time}] ${l.author}: ${l.text}${l.images.map(f => ` ${f ? `[${f}]` : o.noImage}`).join('')}`),
     ...(found.length ? ['', 'Found in the messages:', ...found] : []),
     ...(o.talk.length ? ['', 'Asked about them in Soroka:', ...o.talk.flatMap(x => [`Q: ${x.q}`, `A: ${x.a}`])] : []),
   ];
@@ -56,7 +60,8 @@ export function renderChat(o: { header: string; title: string; period: string; l
   return [o.header, '', `<<< ${o.fence}`, ...block.map(l => l.split(o.fence).join('')), `>>> ${o.fence}`, ''].join('\n');
 }
 
-// The short request the agent opens with: links and Windows Terminal take no ";" (wt splits commands on it), quotes or line breaks.
+// The short request the agent opens with, in one line: the cmd line that starts a terminal agent takes no quotes or line
+// breaks. No ";" either, from when Windows Terminal started them (wt splits commands on it); links encode it anyway.
 const flat = (s: string) => s.replace(/[\r\n]+/g, ' ').replace(/;/g, ',').replace(/"/g, "'").trim();
 export const agentPrompt = (template: string, file: string, question?: string) =>
   flat(template.replace('{file}', () => file).replace('{question}', () => flat(question ?? '').slice(0, 300)));
@@ -75,13 +80,15 @@ export function writeHandoff(title: string, files: { name: string; data: string 
   let dir = path.join(root, `${stamp()}-${slug}`);
   for (let k = 2; fs.existsSync(dir); k++) dir = path.join(root, `${stamp()}-${slug}-${k}`); // two in one second
   fs.mkdirSync(dir);
-  for (const f of files) fs.writeFileSync(path.join(dir, f.name), f.data);
+  try { for (const f of files) fs.writeFileSync(path.join(dir, f.name), f.data); }
+  catch (e) { fs.rmSync(dir, { recursive: true, force: true }); throw e; } // the disk full: no half a chat left behind
   return dir;
 }
 // The handoffs older than the kept time go; the agents' own session history is theirs, not touched here.
 export function cleanHandoffs(keepMs: number, root = HANDOFF_ROOT, now = Date.now()): number {
-  let gone = 0;
-  for (const name of fs.existsSync(root) ? fs.readdirSync(root) : []) {
+  let gone = 0, names: string[] = [];
+  try { names = fs.readdirSync(root); } catch { /* none yet, or not a folder we can list */ }
+  for (const name of names) {
     const dir = path.join(root, name);
     try { if (fs.statSync(dir).isDirectory() && fs.statSync(dir).mtimeMs < now - keepMs) { fs.rmSync(dir, { recursive: true, force: true }); gone++; } }
     catch { /* in use or gone meanwhile: the next round takes it */ }
