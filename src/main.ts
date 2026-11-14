@@ -1070,21 +1070,26 @@ async function variants(d: Draft, hint: string, auto: boolean) {
 // "Suggest a reply": three variants into the answer card; the first one also into its text field. One run per card at a time:
 // asked again meanwhile (the toast's ✨ while drafts mode is at it), the caller waits for the run going on.
 const suggesting = new Map<string, Promise<void>>();
-function suggest(n: string, { hint = '', auto = false } = {}) {
+function suggest(n: string, { hint = '', auto = false } = {}): Promise<void> {
   const d = state.drafts[n];
   if (d?.status !== 'pending') return Promise.resolve();
   const going = suggesting.get(n);
-  if (going) return going;
+  if (going) return hint ? going.then(() => suggest(n, { hint, auto })) : going; // what the user asked for comes after the run going on
   d.busy = true; delete d.error; draftsChanged();
   const run = (async () => {
+    let stale = false; // a newer message came while the AI wrote: these answered the one before
     try {
       await working(t('busy.reply', { title: d.title }), async () => {
+        const was = d.last;
         if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
-        d.variants = await variants(d, hint.trim().slice(0, 1000), auto);
-        if (!d.text || hint) { d.text = d.variants[0] ?? ''; d.kept = false; } // the user's own text stays, unless they asked anew
+        const made = await variants(d, hint.trim().slice(0, 1000), auto);
+        if ((stale = d.last !== was)) return;
+        d.variants = made;
+        if (!d.text || hint) { d.text = made[0] ?? ''; d.kept = false; } // the user's own text stays, unless they asked anew
       });
     } catch (e) { d.error = errorText(e); aiFailed(e); log('suggest:', d.error); }
     finally { d.busy = false; suggesting.delete(n); draftsChanged(); }
+    if (stale) await suggest(n, { hint, auto }); // the newest message gets its own
   })();
   suggesting.set(n, run);
   return run;
@@ -1380,6 +1385,14 @@ function intoCard(key: string, msgs: Msg[]) {
   if (wc.isLoading()) wc.once('did-finish-load', send); else send(); // a new card's page: after its own payload
   return true;
 }
+// drafts mode: the variants made after the card came, into its card on screen or the one waiting its turn
+function variantsReady(n: string) {
+  const d = state.drafts[n];
+  if (!d) return;
+  const queued = toastQueue.find(x => x.reply?.n === n);
+  if (queued?.reply) { queued.reply.variants = d.variants ?? []; queued.hint = d.error ? t('toast.replyFailed') : d.variants?.length ? t('toast.replyReady') : queued.hint; }
+  toastWin?.webContents.send('toast:variants', { n, variants: d.variants ?? [], error: d.error });
+}
 function announce(n: string, why?: string) {
   const d = state.drafts[n];
   if (d?.status !== 'pending') return;
@@ -1387,7 +1400,7 @@ function announce(n: string, why?: string) {
   // the next message goes into its card on screen, or into the one waiting its turn
   if (intoCard(n, msgs)) return;
   const queued = toastQueue.find(x => x.reply?.n === n);
-  if (queued?.reply) { queued.message = d.last; queued.reply.msgs = msgs; return; }
+  if (queued?.reply) { queued.message = d.last; queued.reply.msgs = msgs; queued.reply.marks = marksOf(msgs); return; }
   const ready = !!d.variants?.length;
   // the card itself opens the chat; replying, Teams' quick reactions and the rest are in the card (ui/toast.html)
   toast({ title: d.note, message: d.last, tone: 'accent', long: true, click: () => openInTeams(d.chatId),
@@ -1769,9 +1782,7 @@ async function tick() {
       const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d) && !carded(n); // a card up already: its ✨ makes them on demand
       if (quiet()) { d.hushed = true; saveState(); }
       else announce(n, auto ? t('toast.replyBusy') : undefined);
-      if (!auto) return;
-      await suggest(n, { auto: true });
-      toastWin?.webContents.send('toast:variants', { n, variants: d.variants ?? [], error: d.error }); // the card on screen gets them
+      if (auto) void suggest(n, { auto: true }).then(() => variantsReady(n)); // not awaited: the next look does not wait for the AI
     }));
     await checkActivity();
     if (!windowInUse() && Date.now() - trimmedAt > 10 * 60_000) trimRam(); // what the work since brought back
