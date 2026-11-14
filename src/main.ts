@@ -148,9 +148,11 @@ if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify';
 // urgent: an @mention or a keyword hit, never held back; held: "AI sorts" found it waits for nothing from the user
 // hushed: came in quiet hours, announced when they end; preview: the chat's last message when a card made by request was
 // first seen in the list (a new one of the user's own closes the card)
+// kept: `text` is the user's own, typed in a card or in "Replies" (draft:keep): it stays over the chat's next message and goes
+// without the AI label
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
   context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean;
-  nudge?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[] };
+  nudge?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
 // msgs: the messages of an incoming card, as they came one by one (the chat list's preview, or the opened chat's text in
 // drafts mode); who: their author in a group; me: the message the card came for in a group (the mention, the keyword)
 type Msg = { who?: string; text: string; time: string; me?: boolean };
@@ -439,10 +441,14 @@ handle('toast:click', (_e, action: number) => { // -1 = the card itself
   toastWin?.close();
   run?.();
 });
-// a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come
+// a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come.
+// "Replies" keeps what the user types there too; a field they emptied gives the card back to the app's text.
 handle('draft:keep', (_e, n: string, text: unknown) => {
   const d = state.drafts[askedOnCard(n)];
-  if (d?.status === 'pending' && typeof text === 'string' && text.trim()) { d.text = text.slice(0, 5000); draftsChanged(); }
+  if (d?.status !== 'pending' || typeof text !== 'string') return;
+  // an AI variant left in the field untouched is still the AI's: it keeps its 🤖 when sent
+  Object.assign(d, text.trim() ? { text: text.slice(0, 5000), kept: !d.variants?.some(v => flat(v) === flat(text)) } : { text: '', kept: false });
+  draftsChanged();
 });
 // A Claude session sends only what the user confirms in the app too: a card with the chat and the text, and the request
 // waits for the click. No answer in 3 minutes, or the card closed: not sent.
@@ -1075,7 +1081,7 @@ function suggest(n: string, { hint = '', auto = false } = {}) {
       await working(t('busy.reply', { title: d.title }), async () => {
         if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
         d.variants = await variants(d, hint.trim().slice(0, 1000), auto);
-        if (!d.text || hint) d.text = d.variants[0] ?? '';
+        if (!d.text || hint) { d.text = d.variants[0] ?? ''; d.kept = false; } // the user's own text stays, unless they asked anew
       });
     } catch (e) { d.error = errorText(e); aiFailed(e); log('suggest:', d.error); }
     finally { d.busy = false; suggesting.delete(n); draftsChanged(); }
@@ -1678,7 +1684,7 @@ function closeAnswered(chats: teams.Chat[]) {
     else if (d.nudge) { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
     else if (mine(c)) d.status = 'answered';
     // its card on screen keeps it: the user may be reading it there (its whole texts opened the chat)
-    else if (k !== toastDraft && mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt) d.status = 'read';
+    else if (k !== toastDraft && mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept) d.status = 'read';
     else continue;
     delete d.context; delete d.msgs; changed = true;
   }
@@ -1724,9 +1730,10 @@ async function scan() {
     if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, incoming: true, urgent, msgs: [{ ...msg, me: c.type !== 'direct' }] })); continue; }
     // A newer message joins what the card answers, and wakes a snoozed one. A direct chat's card gathers all the user has not
     // read; a group's starts again from the message that called it, unless its card is still up (then that one keeps its why).
+    // Text the user typed for it stays.
     const d = state.drafts[old], up = carded(old);
     const msgs = c.type === 'direct' || up ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
-    Object.assign(d, { note: up ? d.note : note, last, context, variants: undefined, text: '', at: Date.now(), incoming: true, remindAt: undefined, reminded: false,
+    Object.assign(d, { note: up ? d.note : note, last, context, variants: undefined, text: d.kept ? d.text : '', at: Date.now(), incoming: true, remindAt: undefined, reminded: false,
       urgent: up ? d.urgent : urgent, held: undefined, msgs });
     draftsChanged();
     found.push(old);
@@ -1812,6 +1819,8 @@ function startTimer() {
   timer = setInterval(() => void tick(), 30_000); // a safety net: changes come at once through teams.watchChats
 }
 
+// A text with no whitespace: the card's one-line field drops a variant's line breaks
+const flat = (s: string) => s.replace(/\s+/g, '');
 // One send per card at a time: a second Enter or click while it goes out is turned down, never a second message.
 const sending = new Set<string>();
 async function sendDraft(n: string, text: string, quote = false) {
@@ -1821,8 +1830,11 @@ async function sendDraft(n: string, text: string, quote = false) {
   if (sending.has(n)) throw new Error(t('err.sending'));
   sending.add(n);
   try {
-    // the AI's text gets the 🤖 label; text the user rewrote is the user's own words, and so is the app's ready nudge
-    const fromAi = text === d.text && !!d.text && !d.nudge || !!d.variants?.includes(text);
+    // the AI's text gets the 🤖 label; text the user rewrote or typed (kept) is the user's own words, and so is the app's ready nudge.
+    // A variant the card's one-line field lost its line breaks in goes as the AI wrote it.
+    const variant = d.variants?.find(v => flat(v) === flat(text));
+    if (variant) text = variant;
+    const fromAi = !!variant || (text === d.text && !!d.text && !d.nudge && !d.kept);
     await inChat(d.chatId, () => teams.send({ id: d.chatId, title: d.title }, fromAi ? withLabel(text) : text, d.improve ? { replace: d.last } : { quote }));
     d.status = 'sent';
     delete d.error; delete d.context; delete d.msgs;

@@ -100,13 +100,17 @@
       try { await fn(); } catch (e) { err.textContent = errorText(e); send.disabled = reject.disabled = false; }
     };
     // text of the user's own in the field (not the AI's): what the reply must say, the AI writes the variants after it
-    let current = d, placed = ''; // placed: the text the app last put in the field
+    let current = d, placed = '', keep; // placed: the text the app last put in the field
+    // what the user types waits in the app too: the chat's next message, or the window closed, does not lose it
+    area.oninput = () => { clearTimeout(keep); keep = setTimeout(() => bridge.invoke('draft:keep', d.n, area.value), 600); };
     suggest.onclick = () => {
-      const typed = area.value.trim(), hint = typed && typed !== current.text && !(current.variants || []).includes(typed) ? typed : '';
+      clearTimeout(keep);
+      // kept: what is typed went to the app already (draft:keep), so it is the card's text now and still the user's own
+      const typed = area.value.trim(), hint = typed && (current.kept || typed !== current.text) && !(current.variants || []).includes(typed) ? typed : '';
       if (hint) area.value = '';
       bridge.invoke('draft:suggest', d.n, hint);
     };
-    send.onclick = () => act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked));
+    send.onclick = () => { clearTimeout(keep); act(() => bridge.invoke('draft:send', d.n, area.value, quote.checked)); };
     reject.onclick = () => act(() => bridge.invoke('draft:reject', d.n));
     area.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.click(); } }; // as in Teams: Shift+Enter is a new line
     const decide = el('span', 'decide'); decide.append(reject, send);
