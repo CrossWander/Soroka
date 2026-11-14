@@ -1683,7 +1683,8 @@ function trackQuestions(chats: teams.Chat[]) {
 // In drafts mode the app reads the chat itself, but its card has the variants (or their error) by then.
 // A card made on request (suggest, improve, a Claude session's draft) is done when the user wrote in that chat since it was
 // made, or after a day untouched. In drafts mode the app opens the chats itself: there a card is never taken as read.
-function closeAnswered(chats: teams.Chat[]) {
+// The chat open in a window up behind other programs: Teams reads its new messages at once, the user has not (behindOpen).
+function closeAnswered(chats: teams.Chat[], openId?: string) {
   let changed = false;
   for (const [k, d] of waiting()) {
     const c = chats.find(x => x.id === d.chatId);
@@ -1697,7 +1698,7 @@ function closeAnswered(chats: teams.Chat[]) {
     else if (d.nudge) { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
     else if (mine(c)) d.status = 'answered';
     // its card on screen keeps it: the user may be reading it there (its whole texts opened the chat)
-    else if (k !== toastDraft && mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept) d.status = 'read';
+    else if (k !== toastDraft && mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept && !behindOpen(c.id, openId)) d.status = 'read';
     else continue;
     delete d.context; delete d.msgs; changed = true;
   }
@@ -1708,19 +1709,31 @@ function closeAnswered(chats: teams.Chat[]) {
 const sameMessage = (seen: string | undefined, c: teams.Chat) =>
   seen === `${c.time}|${c.preview}` || (!!seen && seen.slice(seen.indexOf('|') + 1) === c.preview && !/^\d{1,2}:\d{2}$/.test(c.time));
 let chatTitles = new Set<string>(); // the chats in the list at the last look: Activity's mentions in them came as their own cards
+const behindOpen = (chatId: string, openId?: string) => chatId === openId && teamsWin.isVisible() && !teamsWin.isFocused();
+let openLook = ''; // the open chat's "id|time|preview" at the last look
+let mentioned = new Set<string>(); // the groups unread with an @mention at the last look
 
 // New personal messages, @mentions and keyword hits, read from the chat list: notify and monitor modes leave the chat
 // unread in Teams; drafts mode opens it for the transcript Claude needs (Teams then marks it read). One card per chat.
-async function scan() {
+// openId: the chat open in the window, whose new messages Teams reads at once while the window is up behind other programs
+async function scan(openId?: string) {
   const found: string[] = [];
   const chats = await teams.chatList();
-  closeAnswered(chats);
+  closeAnswered(chats, openId);
   trackQuestions(chats);
   chatTitles = new Set(chats.map(c => c.title));
+  const look = (c: teams.Chat) => `${c.id}|${c.time}|${c.preview}`, lastLook = openLook, open = chats.find(c => c.id === openId);
+  openLook = open ? look(open) : '';
+  // read at once there, never unread: a new one from the other side counts as unread, a personal one or a keyword hit
+  const readBehind = (c: teams.Chat) => behindOpen(c.id, openId) && lastLook.startsWith(`${c.id}|`) && lastLook !== look(c) && !MINE.test(c.preview)
+    && (c.type === 'direct' || keywordHit(c));
+  // a group still unread since its @mention card: its next messages join that card's draft without a second card
+  const stillMentioned = mentioned;
+  mentioned = new Set(chats.filter(c => c.unread && c.mention && c.type !== 'direct').map(c => c.id));
   // 5 new ones a look at most; the rest come at the next one. Marked seen once handled: one that failed comes back.
   // A group's card on screen takes the chat's next messages too, not only those that mention the user.
   const onCard = (c: teams.Chat) => !!toastDraft && state.drafts[toastDraft]?.chatId === c.id && state.drafts[toastDraft].status === 'pending' && c.unread;
-  for (const c of chats.filter(c => (wanted(c) || onCard(c)) && !sameMessage(state.seen[c.id], c)).slice(0, 5)) {
+  for (const c of chats.filter(c => (wanted(c) || onCard(c) || readBehind(c)) && !sameMessage(state.seen[c.id], c)).slice(0, 5)) {
     const seen = () => { delete state.seen[c.id]; state.seen[c.id] = `${c.time}|${c.preview}`; saveState(); }; // the newest last: the state keeps the latest
     if (!listed(c)) { seen(); continue; }
     let context: string[] | undefined, last = c.preview; // the preview is cut by Teams; the opened chat gives the whole message
@@ -1743,13 +1756,13 @@ async function scan() {
     if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, incoming: true, urgent, msgs: [{ ...msg, me: c.type !== 'direct' }] })); continue; }
     // A newer message joins what the card answers, and wakes a snoozed one. A direct chat's card gathers all the user has not
     // read; a group's starts again from the message that called it, unless its card is still up (then that one keeps its why).
-    // Text the user typed for it stays.
-    const d = state.drafts[old], up = carded(old);
-    const msgs = c.type === 'direct' || up ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
-    Object.assign(d, { note: up ? d.note : note, last, context, variants: undefined, text: d.kept ? d.text : '', at: Date.now(), incoming: true, remindAt: undefined, reminded: false,
-      urgent: up ? d.urgent : urgent, held: undefined, msgs });
+    // Text the user typed for it stays. Still unread since its @mention card (quietly): the message joins it, no second card.
+    const d = state.drafts[old], up = carded(old), quietly = !up && stillMentioned.has(c.id);
+    const msgs = c.type === 'direct' || up || quietly ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
+    Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', incoming: true, msgs,
+      ...(up || quietly ? {} : { note, urgent }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
     draftsChanged();
-    found.push(old);
+    if (!quietly) found.push(old);
   }
   return found;
 }
@@ -1772,7 +1785,7 @@ async function tick() {
       const before = windowInUse() ? await teams.currentChatId() : undefined;
       try {
         if (!windowInUse()) await teams.showChats(); // the chat list is not there while Teams shows Activity
-        return await scan();
+        return await scan(before);
       } finally { await restoreChat(before); }
     });
     // each message on its own: one waiting for the AI does not hold back another's card. Drafts mode shows the card at once and
