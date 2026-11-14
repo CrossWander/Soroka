@@ -196,6 +196,7 @@ const S: Record<string, [string, string, string]> = {
   'sum.onMe': ['Чекають від мене', 'Waiting on me', 'Ждут от меня'],
   'sum.open': ['Відкриті питання', 'Open questions', 'Открытые вопросы'],
   'sum.none': ['За цей період у чаті немає повідомлень.', 'No messages in this chat for this period.', 'За этот период в чате нет сообщений.'],
+  'sum.allSkipped': ['Усі повідомлення за цей період — від людей зі списку «Не в ШІ».', 'All messages in this period are from people on the "Not to AI" list.', 'Все сообщения за этот период — от людей из списка «Не в ИИ».'],
   'sum.noneToday': ['Сьогодні в чатах нічого не було.', 'Nothing in the chats today.', 'Сегодня в чатах ничего не было.'],
   'sum.noneMissed': ['Непрочитаних чатів немає — нічого не пропущено.', 'No unread chats: nothing missed.', 'Непрочитанных чатов нет — ничего не пропущено.'],
   // summary window

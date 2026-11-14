@@ -121,8 +121,12 @@ const quickReplies = () => (settings.quickReplies.trim() || t('quick.default')).
 // A chat by its title; a person also by the messages they write in other chats, which leave the transcript (forAi).
 // Matched by any part, unlike the notification filters: better a chat too many kept from the AI than one too few.
 const aiSkipped = (title: string) => list(settings.aiSkip).some(name => title.toLowerCase().includes(name));
+// An author as Teams shows them: a group's preview often has the first name only, so one word of a listed name counts.
+const skippedAuthor = (who: string) => !!who.trim() && (aiSkipped(who) || list(settings.aiSkip).some(name => name.split(/\s+/).includes(who.trim().toLowerCase())));
 const notToAi = (title: string) => { if (aiSkipped(title)) throw Object.assign(new Error(t('err.aiSkip', { title })), { status: 403 }); };
-const forAi = (msgs: teams.Message[]) => msgs.filter(m => m.mine || !aiSkipped(m.author));
+// their quote in someone else's reply goes too
+const forAi = (msgs: teams.Message[]) => msgs.filter(m => m.mine || !skippedAuthor(m.author))
+  .map(m => (m.replyTo && skippedAuthor(m.replyTo) ? { ...m, replyTo: undefined, quote: undefined } : m));
 const hhmm = () => new Date().toTimeString().slice(0, 5);
 // Quiet hours may cross midnight (22:00–08:00); "Do not disturb" in Teams counts too when the setting says so.
 let teamsDnd = false; // read from the page on every look at the chat list
@@ -1072,8 +1076,9 @@ function suggest(n: string, { hint = '', auto = false } = {}) {
 }
 
 // The last n messages, those newer than `since`, or those after the user's own last message; at most 500.
-// plain: for the summary without AI, so the "Not to AI" chats are read too
-type Range = { n?: number; since?: number; afterMine?: boolean; signal?: AbortSignal; plain?: boolean; gap?: number }; // gap: "by question" (handoff.byQuestion)
+// plain: for the summary without AI, so the "Not to AI" chats are read too; not when a Claude session asks (session):
+// it is AI too
+type Range = { n?: number; since?: number; afterMine?: boolean; signal?: AbortSignal; plain?: boolean; session?: boolean; gap?: number }; // gap: "by question" (handoff.byQuestion)
 type Found = Request & { count: number; from: string; parts: digest.Part[] }; // parts: the messages read, for the summary without AI
 // «Запитати»: the user's own question about the chats instead of a summary, answered from the transcripts only.
 // history: this talk's earlier questions and answers, so a follow-up ("and who does it?") is understood.
@@ -1084,7 +1089,8 @@ const asked = (question: string, prompt: string, history: Talk[] = []): Request 
   prompt: `${prompt}${history.length ? `\n\nEarlier in this conversation:\n${history.map(x => `Q: ${x.q}\nA: ${x.a}`).join('\n')}` : ''}\n\nQuestion: ${question}`,
 });
 // Reads the chat (Teams marks it read) and builds the request; undefined when the period has no messages.
-async function summaryRequest(chatId: string, title: string, { n = 500, signal, plain, gap, ...period }: Range, question?: string, history?: Talk[]): Promise<Found | undefined> {
+async function summaryRequest(chatId: string, title: string, { n = 500, signal, plain: open, session, gap, ...period }: Range, question?: string, history?: Talk[]): Promise<Found | undefined> {
+  const plain = open && !session;
   if (!plain) notToAi(title);
   const all = await working(t('busy.reading', { title }), () => inChat(chatId, async () => {
     try { return await teams.history({ id: chatId, title }, Math.min(n, 500), { ...period, signal, veil: t('veil.reading', { title }) }); }
@@ -1093,6 +1099,7 @@ async function summaryRequest(chatId: string, title: string, { n = 500, signal, 
   const read = gap ? byQuestion(all, gap) : all;
   const msgs = plain ? read : forAi(read);
   if (signal?.aborted) throw new Error(t('err.stopped'));
+  if (read.length && !msgs.length) throw new Error(t('sum.allSkipped')); // not "no messages": there were
   if (!msgs.length) return undefined;
   const found = { count: msgs.length, from: when(msgs[0].id), parts: [{ id: chatId, title, msgs }] };
   const prompt = `Chat: ${title}\nMessages: ${msgs.length}, from ${when(msgs[0].id)} to ${when(msgs.at(-1)!.id)}\n<<<\n${msgs.map(line).join('\n')}\n>>>`;
@@ -1108,8 +1115,9 @@ async function summaryRequest(chatId: string, title: string, { n = 500, signal, 
 
 // Several chats in one request, a "## title" block each. Teams marks the chats it reads as read;
 // with keepUnread, unread ones go in by their chat-list preview only and stay unread.
-type Picked = Pick<teams.Chat, 'id' | 'title'> & Partial<Pick<teams.Chat, 'unread' | 'preview'>>;
-async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain, ...period }: Range & { keepUnread?: boolean }, question?: string, history?: Talk[]): Promise<Found | undefined> {
+type Picked = Pick<teams.Chat, 'id' | 'title'> & Partial<Pick<teams.Chat, 'unread' | 'preview' | 'type'>>;
+async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain: open, session, gap, ...period }: Range & { keepUnread?: boolean }, question?: string, history?: Talk[]): Promise<Found | undefined> {
+  const plain = open && !session;
   if (!plain) list = list.filter(c => !aiSkipped(c.title));
   const parts = await serial(async () => {
     const before = windowInUse() ? await teams.currentChatId() : undefined;
@@ -1117,11 +1125,15 @@ async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain
     try {
       for (const c of list) { // ponytail: 150 messages a chat, raise for busier chats
         if (signal?.aborted) break;
-        if (keepUnread && c.unread) { out.push({ id: c.id, title: c.title, msgs: [], preview: c.preview ?? '' }); continue; }
-        const msgs = await teams.history(c, Math.min(n, 150), { ...period, signal, veil: t('veil.reading', { title: c.title }) }).catch(e => {
+        if (keepUnread && c.unread) { // its preview, unless a "Not to AI" person wrote it
+          if (plain || !skippedAuthor(authorOf({ type: c.type ?? 'group', preview: c.preview ?? '' }))) out.push({ id: c.id, title: c.title, msgs: [], preview: c.preview ?? '' });
+          continue;
+        }
+        const all = await teams.history(c, Math.min(n, 150), { ...period, signal, veil: t('veil.reading', { title: c.title }) }).catch(e => {
           throw (e as { switched?: boolean }).switched ? new Error(t('err.chatSwitched')) : e;
         });
-        if (msgs.length) out.push({ id: c.id, title: c.title, msgs: plain ? msgs : forAi(msgs) });
+        const read = gap ? byQuestion(all, gap) : all, msgs = plain ? read : forAi(read);
+        if (msgs.length) out.push({ id: c.id, title: c.title, msgs }); // all of them from skipped people: no block with no messages
       }
     } finally { await restoreChat(before); }
     return out;
@@ -1141,17 +1153,17 @@ async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain
 // ("what did I miss"), '+' the chats the user picked, otherwise one chat.
 // plain: the summary without AI; auto: the app asks on its own (the digest), so only an AI without tools answers
 // history: the talk so far in the summary tab, for a follow-up question
-type Ask = { chats?: Picked[]; question?: string; plain?: boolean; auto?: boolean; history?: Talk[] };
+type Ask = { chats?: Picked[]; question?: string; plain?: boolean; session?: boolean; auto?: boolean; history?: Talk[] };
 const NONE: Record<string, string> = { '*': 'sum.noneToday', '!': 'sum.noneMissed' };
-async function windowRequest(chatId: string, title: string, period: string, { chats = [], question, plain, history }: Ask, signal?: AbortSignal) {
+async function windowRequest(chatId: string, title: string, period: string, { chats = [], question, plain, session, history }: Ask, signal?: AbortSignal) {
   const all = (await serial(teams.chatList)).filter(c => c.type !== 'self');
   // today's chats show a clock time ("16:33"), older ones a date; ponytail: 15 chats, raise for busier days
-  if (chatId === '*') return chatsRequest(all.filter(c => /^\d{1,2}:\d{2}/.test(c.time)).slice(0, 15), { since: new Date().setHours(0, 0, 0, 0), signal, plain, keepUnread: true }, question, history);
-  if (chatId === '!') return chatsRequest(all.filter(c => c.unread).slice(0, 10), { n: 100, afterMine: true, signal, plain }, question, history);
+  if (chatId === '*') return chatsRequest(all.filter(c => /^\d{1,2}:\d{2}/.test(c.time)).slice(0, 15), { since: new Date().setHours(0, 0, 0, 0), signal, plain, session, keepUnread: true }, question, history);
+  if (chatId === '!') return chatsRequest(all.filter(c => c.unread).slice(0, 10), { n: 100, afterMine: true, signal, plain, session }, question, history);
   // the chats and their names as Teams has them, not as the page said: "Not to AI" goes by the real name
   const real = (id: string) => all.find(c => c.id === id);
-  if (chatId === '+') return chatsRequest(chats.slice(0, 10).map((c): Picked => real(c.id) ?? c), { ...range(period), signal, plain }, question, history);
-  return summaryRequest(chatId, real(chatId)?.title ?? title, { ...range(period), signal, plain }, question, history);
+  if (chatId === '+') return chatsRequest(chats.slice(0, 10).map((c): Picked => real(c.id) ?? c), { ...range(period), signal, plain, session }, question, history);
+  return summaryRequest(chatId, real(chatId)?.title ?? title, { ...range(period), signal, plain, session }, question, history);
 }
 const windowAnswer = (chatId: string, title: string, period: string, ask: Ask, signal?: AbortSignal): Promise<Summary> =>
   working(ask.plain ? t('summary.reading', { title }) : chatId === '*' ? t('busy.digest') : t('busy.summary', { title }), async () => {
@@ -1319,7 +1331,7 @@ const named = (c: teams.Chat, names: string) => hasName(c.title, names) || hasNa
 const listed = (c: teams.Chat) => !named(c, settings.muteFrom) && (!list(settings.onlyFrom).length || keywordHit(c) || named(c, settings.onlyFrom));
 
 // a card the AI does not get: its chat, or the author of the message it answers, is on the "Not to AI" list
-const skipDraft = (d: Draft) => aiSkipped(d.title) || aiSkipped(authorOf({ type: 'group', preview: d.last }));
+const skipDraft = (d: Pick<Draft, 'title' | 'last'>) => aiSkipped(d.title) || skippedAuthor(authorOf({ type: 'group', preview: d.last }));
 function addDraft(d: Omit<Draft, 'status' | 'at'>) {
   const n = String(state.nextDraft++);
   state.drafts[n] = { ...d, status: 'pending', at: Date.now() };
@@ -1696,7 +1708,7 @@ async function scan() {
       msg = { who: c.type === 'direct' ? undefined : m.author, text: m.text, time: c.time };
     }
     seen();
-    if (mode() === 'monitor' && !aiSkipped(c.title))
+    if (mode() === 'monitor' && !aiSkipped(c.title) && !skippedAuthor(who)) // events.log is read by Claude sessions
       fs.appendFileSync(file('events.log'), JSON.stringify({ at: new Date().toISOString(), chat: c.title, type: c.type, last }) + '\n');
     const note = c.type === 'direct' ? c.title : t(c.mention ? 'toast.mention' : 'toast.keyword', { title: c.title });
     const old = waiting().find(([, d]) => d.chatId === c.id && !d.improve)?.[0], urgent = c.mention || keywordHit(c);
@@ -1900,7 +1912,7 @@ handle('draft:brief', logged('brief', async (_e, n: string) => {
 }));
 // A card's messages for the AI ("Brief", "Ask"): the words of people kept from the AI stay out.
 function cardChat(d: Draft, msgs: Msg[]) {
-  const told = msgs.filter(m => !m.who || !aiSkipped(m.who));
+  const told = msgs.filter(m => !m.who || !skippedAuthor(m.who));
   if (!told.length) throw new Error(t('err.aiSkip', { title: msgs[0]?.who ?? d.title }));
   return `Chat: ${d.title}\n<<<\n${told.map(m => `${m.who ?? d.title}: ${m.text}`).join('\n')}\n>>>`;
 }
@@ -1942,7 +1954,7 @@ async function toAgent(src: AgentSource): Promise<string> {
   }
   const pictures: { name: string; data: Buffer }[] = [];
   let lines: ChatLine[];
-  if ('msgs' in src) lines = src.msgs.filter(m => !m.who || !aiSkipped(m.who)).map(m => ({ author: m.who ?? src.title, mine: false, time: m.time, text: m.text, images: [] }));
+  if ('msgs' in src) lines = src.msgs.filter(m => !m.who || !skippedAuthor(m.who)).map(m => ({ author: m.who ?? src.title, mine: false, time: m.time, text: m.text, images: [] }));
   else {
     const { n = 500, gap, ...period } = range(src.period);
     const { msgs, data } = await working(t('busy.handoff', { title: src.title }), () => inChat(src.chatId, async () => {
@@ -2143,10 +2155,13 @@ function startApi() {
       const url = new URL(req.url ?? '/', 'http://x');
       const route = `${req.method} ${url.pathname}`;
       // a Claude session is AI too: the chats on the "Not to AI" list come without their messages
-      const hide = <T extends { title: string }>(x: T, field: 'preview' | 'last') => (aiSkipped(x.title) ? { ...x, [field]: '' } : x);
-      if (route === 'GET /chats') return json(res, 200, (await serial(teams.chatList)).map(c => hide(c, 'preview')));
-      if (route === 'GET /unread') return json(res, 200, (await serial(teams.chatList)).filter(wanted).map(c => hide(c, 'preview')));
-      if (route === 'GET /drafts') return json(res, 200, Object.fromEntries(Object.entries(state.drafts).map(([n, { context, ...d }]) => [n, hide(d, 'last')])));
+      // the chats on the "Not to AI" list, and the messages of the people on it, come without their text
+      const hide = (c: teams.Chat) => (aiSkipped(c.title) || skippedAuthor(authorOf(c)) ? { ...c, preview: '' } : c);
+      const hideDraft = ({ context, ...d }: Draft) => (aiSkipped(d.title) ? { ...d, last: '', preview: '', msgs: [] } : { ...d, last: skipDraft(d) ? '' : d.last,
+        preview: skippedAuthor(authorOf({ type: 'group', preview: d.preview ?? '' })) ? '' : d.preview, msgs: d.msgs?.filter(m => !skippedAuthor(m.who ?? '')) });
+      if (route === 'GET /chats') return json(res, 200, (await serial(teams.chatList)).map(hide));
+      if (route === 'GET /unread') return json(res, 200, (await serial(teams.chatList)).filter(wanted).map(hide));
+      if (route === 'GET /drafts') return json(res, 200, Object.fromEntries(Object.entries(state.drafts).map(([n, d]) => [n, hideDraft(d)])));
       if (route === 'POST /notify') { // a Claude session tells the user something without opening anything
         const { title, message } = await body(req);
         need(title?.trim(), 'title');
@@ -2166,7 +2181,7 @@ function startApi() {
         need(part, 'chat');
         const c = await serial(() => teams.findChat(part!));
         notToAi(c.title); // the plain summary skips this check for the window, but here it goes to an AI session
-        const r = await windowAnswer(c.id, c.title, `n${Number(url.searchParams.get('n') ?? 100)}`, { plain: url.searchParams.has('plain') }); // plain: no tokens
+        const r = await windowAnswer(c.id, c.title, `n${Number(url.searchParams.get('n') ?? 100)}`, { plain: url.searchParams.has('plain'), session: true }); // plain: no tokens
         return json(res, 200, { chat: c.title, summary: r.text, count: r.count });
       }
       if (route === 'POST /send') { // goes out once the user confirms it in the app's card (confirmSend)
