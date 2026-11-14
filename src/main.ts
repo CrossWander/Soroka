@@ -482,14 +482,14 @@ function createTeamsWindow() {
   ses.setPermissionCheckHandler((_wc, _permission, origin) => TEAMS_PAGE.test(`${origin}/`));
   ses.setDisplayMediaRequestHandler(pickShare);
   // Microsoft's sign-in keeps the user signed in with session cookies: a browser restores them after a restart, Electron
-  // dropped them, and once Teams' day-long token ran out the user signed in again. Kept for 30 days in the session's own
-  // encrypted store, as the browser keeps them (renewed on every sign-in).
+  // dropped them, and once Teams' day-long token ran out the user signed in again. Kept for 90 days in the session's own
+  // encrypted store, as the browser keeps them (renewed on every sign-in); Microsoft's own persistent one lasts as long.
   const SIGN_IN = /(^|\.)login\.(microsoftonline|microsoft|live)\.com$/;
   ses.cookies.on('changed', (_e, c, _cause, removed) => {
     if (removed || !c.session || !SIGN_IN.test(c.domain ?? '')) return;
     void ses.cookies.set({ url: `https://${(c.domain ?? '').replace(/^\./, '')}${c.path ?? '/'}`, name: c.name, value: c.value,
       ...(c.hostOnly ? {} : { domain: c.domain }), path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
-      expirationDate: Date.now() / 1000 + 30 * 86_400 }).catch(e => log('sign-in cookie:', errorText(e)));
+      expirationDate: Date.now() / 1000 + 90 * 86_400 }).catch(e => log('sign-in cookie:', errorText(e)));
   });
   void ses.cookies.get({}).then(all => log(`sign-in cookies kept: ${all.filter(c => SIGN_IN.test(c.domain ?? '')).length}`));
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
