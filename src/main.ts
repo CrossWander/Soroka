@@ -461,6 +461,17 @@ function createTeamsWindow() {
   // checks too, which Electron allows by default: the web pages of chat links open in this session and get none
   ses.setPermissionCheckHandler((_wc, _permission, origin) => TEAMS_PAGE.test(`${origin}/`));
   ses.setDisplayMediaRequestHandler(pickShare);
+  // Microsoft's sign-in keeps the user signed in with session cookies: a browser restores them after a restart, Electron
+  // dropped them, and once Teams' day-long token ran out the user signed in again. Kept for 30 days in the session's own
+  // encrypted store, as the browser keeps them (renewed on every sign-in).
+  const SIGN_IN = /(^|\.)login\.(microsoftonline|microsoft|live)\.com$/;
+  ses.cookies.on('changed', (_e, c, _cause, removed) => {
+    if (removed || !c.session || !SIGN_IN.test(c.domain ?? '')) return;
+    void ses.cookies.set({ url: `https://${(c.domain ?? '').replace(/^\./, '')}${c.path ?? '/'}`, name: c.name, value: c.value,
+      ...(c.hostOnly ? {} : { domain: c.domain }), path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
+      expirationDate: Date.now() / 1000 + 30 * 86_400 }).catch(e => log('sign-in cookie:', errorText(e)));
+  });
+  void ses.cookies.get({}).then(all => log(`sign-in cookies kept: ${all.filter(c => SIGN_IN.test(c.domain ?? '')).length}`));
   teamsWin = new BrowserWindow({ show: false, width: 1400, height: 900, title: 'Soroka', icon: APP_ICON, titleBarStyle: 'hidden', titleBarOverlay: overlay(),
     webPreferences: { preload } });
   teamsWin.removeMenu();
@@ -471,6 +482,7 @@ function createTeamsWindow() {
   teamsWin.on('resize', layout);
   teamsWin.webContents.on('before-input-event', hotkey);
   teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
+  teamsWin.on('session-end', flushSession); // Windows signs out or shuts down: no before-quit comes
   // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
   teamsWin.on('hide', () => {
     closeMenu();
@@ -2177,8 +2189,10 @@ function startApi() {
 // ---------- start ----------
 app.on('second-instance', showTeams);
 app.on('window-all-closed', () => { /* keep running in the tray */ });
+// the cookies (the sign-in among them) and the page's storage are written out, not left to the next lazy write
+const flushSession = () => { const ses = session.fromPartition('persist:teams'); void ses.cookies.flushStore(); ses.flushStorageData(); };
 // whatever still holds the quit back after 3 s (twice it was a window: a sign-in popup, a toast opened while closing), it ends anyway
-app.on('before-quit', () => { quitting = true; setTimeout(() => { log('quit held up: exiting'); app.exit(0); }, 3000); });
+app.on('before-quit', () => { quitting = true; flushSession(); setTimeout(() => { log('quit held up: exiting'); app.exit(0); }, 3000); });
 // The windows pages open (window.open), Teams' and those of the pages opened from it alike. Microsoft's sign-in, and links
 // (Outlook from the apps menu, links in messages) in a window of the app: Teams' session, so Microsoft 365 opens signed in.
 // Only web pages: other schemes would start programs. "Links: in the browser" sends the pages to the default browser;
