@@ -665,7 +665,7 @@ const windowInUse = () => teamsWin.isVisible() && !teamsWin.isMinimized();
 // measured 1.6 GB of RAM down to ~150 MB, growing back slowly; the window opens a moment slower after. Never during a call.
 let emptyWorkingSet: ((pid: number) => void) | null | undefined, trimmedAt = 0;
 function trimRam() {
-  if (process.platform !== 'win32' || callWin || ring) return;
+  if (process.platform !== 'win32' || callWin || ring || teamsPage?.isCurrentlyAudible()) return; // a meeting's sound with its window shut too
   if (emptyWorkingSet === undefined) try {
     const k32 = (require('koffi') as typeof import('koffi')).load('kernel32.dll');
     const open = k32.func('void *__stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
@@ -674,7 +674,9 @@ function trimRam() {
   } catch (e) { emptyWorkingSet = null; log('trim:', errorText(e)); }
   const ram = () => Math.round(app.getAppMetrics().reduce((s, m) => s + m.memory.workingSetSize, 0) / 1024); // MB
   const before = ram();
-  for (const m of app.getAppMetrics()) emptyWorkingSet?.(m.pid);
+  // what is on screen (a card, "Replies") stays in RAM: paged out, it would stall under the user's eyes
+  const shown = new Set(BrowserWindow.getAllWindows().filter(w => w.isVisible()).map(w => w.webContents.getOSProcessId()));
+  for (const m of app.getAppMetrics()) if (!shown.has(m.pid)) emptyWorkingSet?.(m.pid);
   trimmedAt = Date.now();
   log(`trim: RAM ${before} → ${ram()} MB`); // a complaint about memory can be traced
 }
