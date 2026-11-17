@@ -1498,8 +1498,9 @@ function popOutCall(what: string) {
   fit();
   win.on('resize', fit);
   const page = callPage = view.webContents;
-  // only the call: Teams' left rail and its title bar (search, the Office menu) stay in the chats window
-  void page.insertCSS('[data-tid="app-bar-wrapper"],[data-tid="title-bar"]{display:none!important}', { cssOrigin: 'user' });
+  // only the call: Teams' left rail and its title bar (search, the Office menu) stay in the chats window. The rail goes with
+  // its whole layout area: hidden alone, it left its grid column as an empty band on the left
+  void page.insertCSS('[data-tid="app-layout-area--nav"],[data-tid="title-bar"]{display:none!important}', { cssOrigin: 'user' });
   // leaving: Teams' own hang-up first, so the others see it at once, then the page goes and its memory with it
   win.on('close', () => {
     state.callBounds = win.getNormalBounds(); saveState();
