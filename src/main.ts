@@ -586,7 +586,7 @@ const watch = () => Promise.all([
 // first in its menu while it lasts. "Remind me in an hour" or ✕ put the card away for an hour; the "!" and the item stay.
 // signIn(): Microsoft's account page opens in Teams' session, hidden, and comes up when Microsoft asks for the sign-in.
 // Back on the account page and staying there (the page itself goes to the sign-in first, when one is due) the user is
-// signed in: the window closes and the chats reload, so Teams signs in quietly again. A call's page is left as it is:
+// signed in: the window hides at once, closes after the check and the chats reload, so Teams signs in quietly again. A call's page is left as it is:
 // reloading it would drop the call.
 let signInWin: BrowserWindow | null = null, signInCard: BrowserWindow | null = null;
 let signInState: '' | 'ask' | 'wait' | 'done' = '', signInLater = 0, signInCardTimer: NodeJS.Timeout | undefined;
@@ -638,9 +638,11 @@ function signIn(check = false) {
     log('sign-in: at', new URL(url).host); // where a sign-in stops, next time one does
     if (!ACCOUNT.test(url)) { // Microsoft's sign-in, or the organization's own
       if (check) return win.close(); // still not signed in
-      if (!asked) { asked = true; win.show(); }
+      asked = true;
+      if (!win.isVisible()) win.show(); // also when Microsoft asks once more after the account page
       return;
     }
+    if (asked) win.hide(); // signed in: its check goes on unseen, no window hanging there for the user to close half-way
     const settle = () => {
       if (win.webContents.isLoadingMainFrame()) { done = setTimeout(settle, 2000); return; } // the page's own frames load on and on
       log(`sign-in: ${asked ? 'signed in again' : 'Microsoft did not ask'}`);
