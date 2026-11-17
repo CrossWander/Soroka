@@ -60,7 +60,7 @@
   const { jiraUrl } = await bridge.invoke('settings:get');
   const list = document.getElementById('list');
   const cards = new Map();
-  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const errorText = e => String(e.message || e);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
 
   function card(d) {

@@ -80,19 +80,16 @@ export async function showChats() {
   if (!(await exists('[role="tree"]', 10_000))) throw fail(502, 'the chat list did not open');
 }
 
-// Real mouse click in the middle of the index-th match (negative index counts from the end);
-// `label` keeps only elements whose aria-label or text contains it.
-async function click(sel: string, index = 0, label?: string) {
-  const at = await run(({ sel, index, label }) => {
-    const els = [...document.querySelectorAll(sel)]
-      .filter(e => !label || (e.getAttribute('aria-label') || (e as HTMLElement).innerText || '').includes(label));
-    const e = els.at(index);
+// Real mouse click in the middle of the index-th match (negative index counts from the end).
+async function click(sel: string, index = 0) {
+  const at = await run(({ sel, index }) => {
+    const e = [...document.querySelectorAll(sel)].at(index);
     if (!e) return null;
     e.scrollIntoView({ block: 'center' });
     const r = e.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  }, { sel, index, label });
-  if (!at) throw fail(404, `not found: ${sel}${label ? ` "${label}"` : ''}`);
+  }, { sel, index });
+  if (!at) throw fail(404, `not found: ${sel}`);
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
     await cdp('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
 }
@@ -485,7 +482,6 @@ export async function selfChat() {
   return c;
 }
 // The user's display name: the self-chat title without its "(you)" suffix in whatever language.
-export const myName = async () => (await selfChat()).title.replace(/\s*\([^)]*\)\s*$/, '');
 
 // The user's own status as their avatar button names it ("Ваш профиль, состояние Не беспокоить"), in Teams' language.
 export const myStatus = (): Promise<string> => run(() => document.getElementById('idna-me-control-avatar-trigger')?.getAttribute('aria-label') ?? '');

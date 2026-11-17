@@ -67,31 +67,30 @@ export const agentPrompt = (template: string, file: string, question?: string) =
   flat(template.replace('{file}', () => file).replace('{question}', () => flat(question ?? '').slice(0, 300)));
 
 // Away from the app's own data (its Teams session and keys) and from the project (git would see it).
-export const HANDOFF_ROOT = path.join(os.tmpdir(), 'Soroka-handoff');
+const ROOT = path.join(os.tmpdir(), 'Soroka-handoff');
 const stamp = (d = new Date()) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 };
-export function writeHandoff(title: string, files: { name: string; data: string | Buffer }[], root = HANDOFF_ROOT): string {
+export function writeHandoff(title: string, files: { name: string; data: string | Buffer }[]): string {
   // letters, digits, "_" and "-" only: any member names a group chat, and the path goes through the request (";"), cmd ("%")
   // and links (an emoji cut in half throws in encodeURIComponent) — so whole characters, by code point
   const slug = Array.from(title.replace(/[^\p{L}\p{N}_-]+/gu, ' ').trim().replace(/\s+/g, '-')).slice(0, 40).join('') || 'chat';
-  fs.mkdirSync(root, { recursive: true });
-  let dir = path.join(root, `${stamp()}-${slug}`);
-  for (let k = 2; fs.existsSync(dir); k++) dir = path.join(root, `${stamp()}-${slug}-${k}`); // two in one second
+  fs.mkdirSync(ROOT, { recursive: true });
+  let dir = path.join(ROOT, `${stamp()}-${slug}`);
+  for (let k = 2; fs.existsSync(dir); k++) dir = path.join(ROOT, `${stamp()}-${slug}-${k}`); // two in one second
   fs.mkdirSync(dir);
   try { for (const f of files) fs.writeFileSync(path.join(dir, f.name), f.data); }
   catch (e) { fs.rmSync(dir, { recursive: true, force: true }); throw e; } // the disk full: no half a chat left behind
   return dir;
 }
 // The handoffs older than the kept time go; the agents' own session history is theirs, not touched here.
-export function cleanHandoffs(keepMs: number, root = HANDOFF_ROOT, now = Date.now()): number {
-  let gone = 0, names: string[] = [];
-  try { names = fs.readdirSync(root); } catch { /* none yet, or not a folder we can list */ }
+export function cleanHandoffs(keepMs: number) {
+  let names: string[] = [];
+  try { names = fs.readdirSync(ROOT); } catch { /* none yet, or not a folder we can list */ }
   for (const name of names) {
-    const dir = path.join(root, name);
-    try { if (fs.statSync(dir).isDirectory() && fs.statSync(dir).mtimeMs < now - keepMs) { fs.rmSync(dir, { recursive: true, force: true }); gone++; } }
+    const dir = path.join(ROOT, name);
+    try { if (fs.statSync(dir).isDirectory() && fs.statSync(dir).mtimeMs < Date.now() - keepMs) fs.rmSync(dir, { recursive: true, force: true }); }
     catch { /* in use or gone meanwhile: the next round takes it */ }
   }
-  return gone;
 }

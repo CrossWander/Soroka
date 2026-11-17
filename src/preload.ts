@@ -8,7 +8,8 @@ const EVENTS = ['drafts', 'toast', 'toast:variants', 'toast:msgs', 'summary:pres
 contextBridge.exposeInMainWorld('bridge', {
   invoke: (channel: string, ...args: unknown[]) => {
     if (!CHANNELS.includes(channel)) throw new Error(`unknown channel ${channel}`);
-    return ipcRenderer.invoke(channel, ...args);
+    // the main process's own message, without Electron's "Error invoking remote method 'x': Error: " before it
+    return ipcRenderer.invoke(channel, ...args).catch((e: Error) => { throw new Error(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); });
   },
   on: (event: string, fn: (payload: unknown) => void) => {
     if (!EVENTS.includes(event)) throw new Error(`unknown event ${event}`);

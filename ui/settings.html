@@ -211,7 +211,7 @@
 <script type="module">
   await i18n;
   const $ = id => document.getElementById(id);
-  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const errorText = e => String(e.message || e);
   const spin = () => Object.assign(document.createElement('span'), { className: 'spin' }); // the AI takes a while: show it is working
   $('welcome').hidden = !new URLSearchParams(location.search).has('welcome');
   let current = {}, models = {};

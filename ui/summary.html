@@ -65,7 +65,7 @@
 <script type="module">
   // The summary is text about Teams messages (the AI's, or picked from them): textContent only.
   const $ = id => document.getElementById(id);
-  const errorText = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const errorText = e => String(e.message || e);
   // talk: the questions asked about this chat and period, and the answers; a follow-up goes with them. Another chat, another
   // period or a summary starts it over.
   let chats = [], preset = null, running = false, talk = [], aiOff = false, agentsFound = false, agentBusy = false;

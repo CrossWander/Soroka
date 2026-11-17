@@ -149,7 +149,7 @@
   const menuOpen = () => [$('menu'), $('agent-menu')].find(m => !m.hidden);
   const fit = () => bridge.invoke('toast:size', card.offsetHeight + 32 + (menuOpen() ? menuOpen().offsetHeight + 6 : 0));
   const say = (text, error) => { $('hint').textContent = text; $('hint').classList.toggle('error', !!error); return fit(); };
-  const failed = e => String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const failed = e => String(e.message || e);
   const busy = on => { for (const b of card.querySelectorAll('.row button, .reply button, #brief')) b.disabled = on; };
   // A chat's card gathers its messages as they come (one person's in a row as one run, the author over it in a group);
   // a single short whole message of a direct chat stays the plain text it always was (a long one would lose its end there).

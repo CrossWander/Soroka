@@ -65,7 +65,7 @@
       if (busy) return;
       busy = true; document.body.style.cursor = 'progress'; $('status').className = ''; $('status').textContent = t('react.busy');
       try { await bridge.invoke('react:pick', n, r.id, r.tab); } // the window closes on success
-      catch (e) { $('status').className = 'error'; $('status').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); }
+      catch (e) { $('status').className = 'error'; $('status').textContent = String(e.message || e); }
       finally { busy = false; document.body.style.cursor = ''; }
     };
     return b;

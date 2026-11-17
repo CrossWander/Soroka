@@ -100,7 +100,7 @@
         all.forEach(x => (x.disabled = true));
         bridge.invoke('ring:click', b.i).catch(err => {
           all.forEach(x => (x.disabled = false));
-          $('kind').textContent = $('kind').title = String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+          $('kind').textContent = $('kind').title = String(err.message || err);
           $('kind').classList.add('error');
         });
       };
