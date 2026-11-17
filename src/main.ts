@@ -1740,7 +1740,8 @@ function closeAnswered(chats: teams.Chat[], openId?: string) {
     else if (d.nudge) { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
     else if (mine(c)) d.status = 'answered';
     // its card on screen keeps it: the user may be reading it there (its whole texts opened the chat)
-    else if (k !== toastDraft && mode() !== 'drafts' && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept && !behindOpen(c.id, openId)) d.status = 'read';
+    // drafts mode opens the chats itself, so read there says nothing of the user, unless the app left it unopened (fyi)
+    else if (k !== toastDraft && (mode() !== 'drafts' || d.fyi) && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept && !behindOpen(c.id, openId)) d.status = 'read';
     else continue;
     delete d.context; delete d.msgs; changed = true;
   }
