@@ -1804,7 +1804,8 @@ async function scan(openId?: string) {
     // (quietly): the message joins it, no second card.
     const d = state.drafts[old], up = carded(old), quietly = !up && stillMentioned.has(c.id);
     const msgs = c.type === 'direct' || fyi || up || quietly ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
-    Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', incoming: true, msgs,
+    // nudge goes: a reminder about the user's question that the answer joined (it was busy) is an incoming card now
+    Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', incoming: true, nudge: undefined, msgs,
       ...(up || quietly ? {} : { note, urgent, fyi }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
     draftsChanged();
     if (!quietly) found.push(old);
