@@ -954,7 +954,8 @@ async function windowSummary(page: Electron.WebContents, chatId: string, title: 
 // settings; "Open in AI chat" (the site of the user's plan) still works.
 let aiInfo: ai.Info[] = [];
 const aiReady = () => usable().length > 0;
-const mode = () => (aiReady() ? settings.wakeMode : 'notify');
+// drafts mode needs an AI that answers on its own (modelFor auto): with only AIs with tools ready, the cards only notify
+const mode = () => (aiReady() && (settings.wakeMode !== 'drafts' || modelFor('draftModel', true)) ? settings.wakeMode : 'notify');
 async function refreshAi() {
   const found = settings.aiOff ? [] : await ai.detect();
   aiInfo = settings.aiOff ? [] : found; // "Do not use AI" switched on while it looked
@@ -1254,7 +1255,7 @@ setInterval(() => {
   if (!settings.digestAt || hhmm() < settings.digestAt || state.digestDay === day || status !== 'ready' || teamsWin.isFocused() || quiet() || Date.now() < digestRetry) return;
   state.digestDay = day; // marked before the run: the timer comes round again while it reads
   saveState();
-  windowAnswer('*', t('summary.digest'), '', { plain: !aiReady(), auto: true }).then(r => {
+  windowAnswer('*', t('summary.digest'), '', { plain: !modelFor('summaryModel', true), auto: true }).then(r => { // plain: no AI answers on its own
     digestTries = 0; remember('*', r);
     if (r.count) toast({ title: t('toast.digestReady'), message: t('toast.digestReadyText', { n: r.count }), tone: 'accent', long: true, click: () => showSummary('*', r) });
   }).catch(e => {
