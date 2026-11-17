@@ -708,7 +708,9 @@ function trimRam() {
   // in a call its sound, video and GPU processes stay too: paged out, they would stutter
   for (const m of app.getAppMetrics()) if (!shown.has(m.pid) && (!callWin || m.type === 'Tab')) emptyWorkingSet?.(m.pid);
   trimmedAt = Date.now();
-  log(`trim: RAM ${before} → ${ram()} MB`); // a complaint about memory can be traced
+  // a complaint about memory can be traced; the Teams page's private bytes, which a trim leaves, show whether it grows
+  const page = app.getAppMetrics().find(m => m.pid === teamsPage.getOSProcessId())?.memory.privateBytes ?? 0;
+  log(`trim: RAM ${before} → ${ram()} MB, Teams page ${Math.round(page / 1024)} MB private`);
 }
 // After the app opened chats itself: give the user back their chat, or park a hidden window on the self-chat,
 // where nothing new arrives unseen (a new message in the chat left open would be read silently).
