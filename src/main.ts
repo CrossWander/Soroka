@@ -389,6 +389,15 @@ handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPa
 type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; full?: boolean; click?: () => void; gone?: () => void;
   actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean; agent: boolean; marks: string[] };
   stack?: { key: string; msgs: Msg[] } };
+// The cards (a message, the sign-in, a call): transparent, the page draws the card with its shadow and asks for its height.
+const CARD = 392;
+const cardWindow = (o: Electron.BrowserWindowConstructorOptions = {}) => new BrowserWindow({ width: CARD, height: 200, show: false, frame: false,
+  transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: 'Soroka', webPreferences: { preload }, ...o });
+// On the primary screen: bottom right, `above` px higher, or top right.
+function corner(win: BrowserWindow, height: number, above: number | 'top' = 0) {
+  const { workArea: wa } = screen.getPrimaryDisplay(), h = Math.ceil(height);
+  win.setBounds({ width: CARD, height: h, x: wa.x + wa.width - CARD, y: above === 'top' ? wa.y : wa.y + wa.height - h - above });
+}
 let toastWin: BrowserWindow | null = null;
 let toastDraft: string | undefined; // the message card on screen: its draft, or its channel's stack key
 const carded = (n: string) => toastDraft === n || toastQueue.some(x => (x.reply?.n ?? x.stack?.key) === n); // its card is up, or waits its turn
@@ -397,6 +406,7 @@ let toastHandlers: ((() => void) | undefined)[] = [], toastGone: (() => void) | 
 // one card counting the rest: they are in the tray's recent ones, and the messages in "Replies".
 const toastQueue: Toast[] = [];
 let toastOn = false, toastGuard: NodeJS.Timeout | undefined, toastMissed = 0, toastNow: Toast | undefined;
+const keepCard = () => { clearTimeout(toastGuard); toastGuard = undefined; }; // the user is busy with it: no minute closes it
 function nextToast() {
   toastOn = false; clearTimeout(toastGuard); toastDraft = undefined; toastNow = undefined;
   const gone = toastGone; toastGone = undefined; gone?.();
@@ -421,21 +431,19 @@ function toast(item: Toast, fromQueue = false) {
   const payload = { ...card, actions: actions.map(a => a.label), icon: APP_ICON_URL, life: stay ? 0 : long ? 10_000 : 4_000, // 10 s for what the user should act on
     closeLabel: t('toast.close') };
   if (toastWin) return toastWin.webContents.send('toast', payload);
-  toastWin = new BrowserWindow({ width: 392, height: 160, show: false, frame: false, transparent: true, resizable: false, focusable: false,
-    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, title: 'Soroka', webPreferences: { preload } });
+  toastWin = cardWindow({ height: 160 });
   toastWin.loadFile(ui('toast.html'));
   toastWin.webContents.once('did-finish-load', () => toastWin?.webContents.send('toast', payload));
   toastWin.on('closed', () => { toastWin = null; nextToast(); });
 }
 handle('toast:size', (_e, height: number) => { // the card measured itself: sit it in the corner and show
   if (!toastWin) return;
-  const { workArea: wa } = screen.getPrimaryDisplay(), under = signInCard?.isVisible() ? signInCard.getBounds().height : 0; // the sign-in card stays below
-  toastWin.setBounds({ width: 392, height: Math.ceil(height), x: wa.x + wa.width - 392, y: wa.y + wa.height - Math.ceil(height) - under });
+  corner(toastWin, height, signInCard?.isVisible() ? signInCard.getBounds().height : 0); // the sign-in card stays below
   toastWin.setAlwaysOnTop(true, 'pop-up-menu');
   if (!toastWin.isVisible()) toastWin.showInactive(); // it also resizes a card on screen (the reply field, the menu): no second show
 });
 // the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
-handle('toast:focus', () => { clearTimeout(toastGuard); toastGuard = undefined; toastWin?.setFocusable(true); toastWin?.focus(); });
+handle('toast:focus', () => { keepCard(); toastWin?.setFocusable(true); toastWin?.focus(); });
 // the mouse on the card: the user is reading it, the next card does not take its place after the minute
 handle('toast:hold', () => { if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 10 * 60_000); } });
 // the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
@@ -598,16 +606,14 @@ function showSignInCard(state: 'ask' | 'wait' | 'done') {
   clearTimeout(signInCardTimer);
   if (state === 'done') signInCardTimer = setTimeout(() => signInCard?.close(), 4000);
   if (signInCard) return signInCard.webContents.send('signin', state);
-  const win = signInCard = new BrowserWindow({ width: 392, height: 200, show: false, frame: false, transparent: true, hasShadow: false, resizable: false,
-    alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: 'Soroka', webPreferences: { preload } });
+  const win = signInCard = cardWindow();
   win.loadFile(ui('signin.html'));
   win.webContents.on('did-finish-load', () => win.webContents.send('signin', signInState)); // also after a reload (a language change)
   win.on('closed', () => { if (signInCard === win) { signInCard = null; signInState = ''; } });
 }
 handle('signin:size', (e, height: number) => { // above the clock, under the message cards (toast:size leaves it room)
   if (!signInCard || e.sender !== signInCard.webContents) return;
-  const { workArea: wa } = screen.getPrimaryDisplay(), h = Math.ceil(height);
-  signInCard.setBounds({ width: 392, height: h, x: wa.x + wa.width - 392, y: wa.y + wa.height - h });
+  corner(signInCard, height);
   signInCard.setAlwaysOnTop(true, 'pop-up-menu');
   if (!signInCard.isVisible()) signInCard.showInactive();
 });
@@ -734,11 +740,11 @@ async function restoreChat(before?: string) {
     }
   } catch (e) { log('restore chat:', errorText(e)); }
 }
-// Work in a chat the app opens itself (sending, a reaction, reading): the user's own chat comes back after it, or a hidden
-// window parks on the self-chat, so later messages in that chat are not read unseen.
-const inChat = <T>(chatId: string, fn: () => Promise<T>) => serial(async () => {
+// Work in a chat the app opens itself (sending, a reaction, reading; undefined: in several): the user's own chat comes back
+// after it, or a hidden window parks on the self-chat, so later messages in that chat are not read unseen.
+const inChat = <T>(chatId: string | undefined, fn: (before?: string) => Promise<T>) => serial(async () => {
   const before = windowInUse() ? await teams.currentChatId() : undefined;
-  try { return await fn(); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
+  try { return await fn(before); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
 });
 
 // The chat open in the Teams window, if any, and what else the action reads there: in one turn of the queue, so the app's
@@ -1108,6 +1114,8 @@ async function askAi(req: Request, key: 'draftModel' | 'summaryModel', signal?: 
   }
 }
 
+// The chat's last messages for the AI, read once per card.
+const withContext = async (d: Draft) => { if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line); };
 async function variants(d: Draft, hint: string, auto: boolean) {
   const req = variantsRequest(d, hint);
   const out = await askAi(req, 'draftModel', undefined, auto);
@@ -1132,7 +1140,7 @@ function suggest(n: string, { hint = '', auto = false } = {}): Promise<void> {
     try {
       await working(t('busy.reply', { title: d.title }), async () => {
         const was = d.last;
-        if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
+        await withContext(d);
         const made = await variants(d, hint.trim().slice(0, 1000), auto);
         if ((stale = d.last !== was)) return;
         d.variants = made;
@@ -1190,23 +1198,20 @@ type Picked = Pick<teams.Chat, 'id' | 'title'> & Partial<Pick<teams.Chat, 'unrea
 async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain: open, session, gap, ...period }: Range & { keepUnread?: boolean }, question?: string, history?: Talk[]): Promise<Found | undefined> {
   const plain = open && !session;
   if (!plain) list = list.filter(c => !aiSkipped(c.title));
-  const parts = await serial(async () => {
-    const before = windowInUse() ? await teams.currentChatId() : undefined;
+  const parts = await inChat(undefined, async () => {
     const out: digest.Part[] = [];
-    try {
-      for (const c of list) { // ponytail: 150 messages a chat, raise for busier chats
-        if (signal?.aborted) break;
-        if (keepUnread && c.unread) { // its preview, unless a "Not to AI" person wrote it
-          if (plain || !skippedAuthor(authorOf({ type: c.type ?? 'group', preview: c.preview ?? '' }))) out.push({ id: c.id, title: c.title, msgs: [], preview: c.preview ?? '' });
-          continue;
-        }
-        const all = await teams.history(c, Math.min(n, 150), { ...period, signal, veil: t('veil.reading', { title: c.title }) }).catch(e => {
-          throw (e as { switched?: boolean }).switched ? new Error(t('err.chatSwitched')) : e;
-        });
-        const read = gap ? byQuestion(all, gap) : all, msgs = plain ? read : forAi(read);
-        if (msgs.length) out.push({ id: c.id, title: c.title, msgs }); // all of them from skipped people: no block with no messages
+    for (const c of list) { // ponytail: 150 messages a chat, raise for busier chats
+      if (signal?.aborted) break;
+      if (keepUnread && c.unread) { // its preview, unless a "Not to AI" person wrote it
+        if (plain || !skippedAuthor(authorOf({ type: c.type ?? 'group', preview: c.preview ?? '' }))) out.push({ id: c.id, title: c.title, msgs: [], preview: c.preview ?? '' });
+        continue;
       }
-    } finally { await restoreChat(before); }
+      const all = await teams.history(c, Math.min(n, 150), { ...period, signal, veil: t('veil.reading', { title: c.title }) }).catch(e => {
+        throw (e as { switched?: boolean }).switched ? new Error(t('err.chatSwitched')) : e;
+      });
+      const read = gap ? byQuestion(all, gap) : all, msgs = plain ? read : forAi(read);
+      if (msgs.length) out.push({ id: c.id, title: c.title, msgs }); // all of them from skipped people: no block with no messages
+    }
     return out;
   });
   if (signal?.aborted) throw new Error(t('err.stopped'));
@@ -1369,15 +1374,12 @@ function range(period: string): Range {
 
 // "Learn my style": the user's own messages from recent chats that are already read (opening an unread one would mark it read).
 async function learnStyle() {
-  const mine = await serial(async () => {
-    const before = windowInUse() ? await teams.currentChatId() : undefined;
+  const mine = await inChat(undefined, async () => {
     const texts: string[] = [];
-    try {
-      for (const c of (await teams.chatList()).filter(c => !c.unread && (c.type === 'direct' || c.type === 'group') && !aiSkipped(c.title)).slice(0, 8)) {
-        await teams.openChat(c);
-        texts.push(...(await teams.lastMessages(60)).filter(m => m.mine && m.text).map(m => m.text));
-      }
-    } finally { await restoreChat(before); }
+    for (const c of (await teams.chatList()).filter(c => !c.unread && (c.type === 'direct' || c.type === 'group') && !aiSkipped(c.title)).slice(0, 8)) {
+      await teams.openChat(c);
+      texts.push(...(await teams.lastMessages(60)).filter(m => m.mine && m.text).map(m => m.text));
+    }
     return texts;
   });
   if (mine.length < 5) throw new Error(t('err.fewMessages'));
@@ -1486,17 +1488,14 @@ function onRing(r: teams.Ring | null) {
 const ringView = () => ring && { kind: ring.kind, title: ring.title, message: ring.message, live: ring.live, buttons: ring.buttons };
 function showRing() {
   if (ringWin) return ringWin.webContents.send('ring', ringView());
-  // transparent like the app's cards: the page draws the card with its shadow and asks for its height (ring:size)
-  const win = ringWin = new BrowserWindow({ width: 392, height: 200, show: false, frame: false, transparent: true, hasShadow: false, resizable: false,
-    alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: t('call.window'), webPreferences: { preload } });
+  const win = ringWin = cardWindow({ title: t('call.window') });
   win.loadFile(ui('call.html'));
   win.webContents.on('did-finish-load', () => win.webContents.send('ring', ringView())); // also after a reload (a language change)
   win.on('closed', () => { if (ringWin === win) ringWin = null; });
 }
 handle('ring:size', (_e, height: number) => { // top right: the regular cards come up at the bottom right
   if (!ringWin) return;
-  const { workArea: wa } = screen.getPrimaryDisplay();
-  ringWin.setBounds({ width: 392, height: Math.ceil(height), x: wa.x + wa.width - 392, y: wa.y });
+  corner(ringWin, height, 'top');
   ringWin.setAlwaysOnTop(true, 'screen-saver'); // above full-screen windows too, like Teams' own call toast
   ringWin.showInactive();
 });
@@ -1838,12 +1837,9 @@ async function tick() {
     teamsDnd = /не беспокоить|не турбувати|do not disturb|презент|presenting/i.test(await teams.myStatus().catch(() => ''));
     remind();
     if (mode() === 'drafts' && teamsWin.isFocused()) return; // drafts mode opens chats: not under the user's hands
-    const found = await serial(async () => {
-      const before = windowInUse() ? await teams.currentChatId() : undefined;
-      try {
-        if (!windowInUse()) await teams.showChats(); // the chat list is not there while Teams shows Activity
-        return await scan(before);
-      } finally { await restoreChat(before); }
+    const found = await inChat(undefined, async before => {
+      if (!windowInUse()) await teams.showChats(); // the chat list is not there while Teams shows Activity
+      return scan(before);
     });
     // each message on its own: one waiting for the AI does not hold back another's card. Drafts mode shows the card at once and
     // its variants follow; in quiet hours it waits for them to end (remind).
@@ -1984,7 +1980,7 @@ handle('draft:suggest', async (_e, n: string, hint: unknown) => {
 // A short one ending with "…" is whole as it is (the preview cuts at ~110 characters, the author's name included).
 const cut = (m: Msg) => m.text.length >= 50 && m.text.endsWith('…');
 async function wholeMsgs(n: string) {
-  if (toastDraft === n) { clearTimeout(toastGuard); toastGuard = undefined; } // the user waits on its card: it stays, as when typing in it
+  if (toastDraft === n) keepCard(); // the user waits on its card: it stays, as when typing in it
   const d = state.drafts[n];
   if (!d?.msgs?.some(cut)) return d?.msgs ?? [];
   const read = await working(t('busy.reading', { title: d.title }), () =>
@@ -2095,7 +2091,7 @@ async function toAgent(src: AgentSource): Promise<string> {
 handle('draft:agent', logged('agent', (_e, n: string, period: unknown) => {
   const d = state.drafts[String(n)];
   if (!d) throw new Error(t('err.handled'));
-  if (toastDraft === String(n)) { clearTimeout(toastGuard); toastGuard = undefined; } // the user waits on its card: it stays
+  if (toastDraft === String(n)) keepCard(); // the user waits on its card: it stays
   return toAgent({ chatId: d.chatId, title: d.title, period: ['q', 'd0', 'd7', 'n50'].includes(String(period)) ? String(period) : 'q' });
 }));
 // From the summary tab: its chat and period, with the talk there; the last question asked is the agent's question
@@ -2117,7 +2113,7 @@ handle('summary:handoff', logged('summary handoff', async (_e: unknown, chatId: 
 handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: string) => {
   const d = state.drafts[n];
   if (d?.status !== 'pending') throw new Error(t('err.handled'));
-  if (!d.context?.length) d.context = forAi(await inChat(d.chatId, () => teams.history({ id: d.chatId, title: d.title }, 15))).map(line);
+  await withContext(d);
   await handoff(variantsRequest(d), 'draftModel');
 }));
 handle('models:get', () => models());
@@ -2129,10 +2125,11 @@ function webWindow(url: string) {
   void win.loadURL(url);
   return win;
 }
+const jiraBase = () => settings.jiraUrl.replace(/\/+$/, '');
 handle('open:jira', (_e, key: string) => openJira(String(key)));
 function openJira(key: string) { // where the links of Teams open: here or in the browser
-  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return;
-  const url = `${settings.jiraUrl.replace(/\/+$/, '')}/browse/${key}`;
+  if (!settings.jiraUrl || !teams.JIRA_KEY.test(key)) return;
+  const url = `${jiraBase()}/browse/${key}`;
   if (settings.links === 'browser') void shell.openExternal(url); else webWindow(url);
 }
 // A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
@@ -2140,7 +2137,7 @@ function openJira(key: string) { // where the links of Teams open: here or in th
 const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
 handle('jira:issue', (_e, key: string) => jiraIssue(String(key)));
 async function jiraIssue(key: string) {
-  if (!settings.jiraUrl || !/^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(key)) return null;
+  if (!settings.jiraUrl || !teams.JIRA_KEY.test(key)) return null;
   const hit = jiraSeen.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.issue;
   const r = await jiraGet(`/rest/api/2/issue/${key}?fields=summary,status`);
@@ -2154,14 +2151,14 @@ async function jiraIssue(key: string) {
 // The same after the Jira links and keys in Teams' chats; a click on a key opens it as a link would. Not signed in: a hint
 // after the links, asked again in a minute (a click on the link opens Jira in a window of the app, where the user signs in).
 // ponytail: re-asked on the page's next change, not on the sign-in itself
-const jiraLinks = () => teams.watchJira(settings.jiraUrl.replace(/\/+$/, ''), keys => {
+const jiraLinks = () => teams.watchJira(jiraBase(), keys => {
   for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000, false)
     : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000, !!i)).catch(e => log('jira links:', errorText(e)));
 }, key => openJira(key));
 // A GET to Jira as the user: with the saved token, when it was saved for this address and Jira still takes it; else with
 // the cookies of a sign-in in a window of the app. The token never follows a redirect: one fails the request.
 async function jiraGet(apiPath: string) {
-  const base = settings.jiraUrl.replace(/\/+$/, ''), token = jiraToken(base);
+  const base = jiraBase(), token = jiraToken(base);
   if (token) {
     const r = await net.fetch(`${base}${apiPath}`, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error' })
       .catch(() => undefined);
@@ -2182,14 +2179,14 @@ function jiraSaved(): { base: string; token: string; user: string } | undefined 
 const jiraToken = (base: string) => { const s = jiraSaved(); return s?.base === base ? s.token : undefined; };
 handle('jira:token', () => {
   const s = jiraSaved();
-  return s ? { user: s.user, other: s.base !== settings.jiraUrl.replace(/\/+$/, ''), bad: jiraTokenBad } : null;
+  return s ? { user: s.user, other: s.base !== jiraBase(), bad: jiraTokenBad } : null;
 });
 // Saves a token Jira takes for the address in the settings ('' removes it). Only from the settings page.
 handle('jira:tokenSet', async (e, value: unknown) => {
   if (e.sender !== settingsView?.webContents) return;
   if (value === '') fs.rmSync(JIRA_TOKEN, { force: true });
   else {
-    const base = settings.jiraUrl.replace(/\/+$/, ''), token = String(value).trim();
+    const base = jiraBase(), token = String(value).trim();
     if (!base) throw new Error(t('set.jiraTokenNoUrl'));
     if (!/^[\x21-\x7e]{10,500}$/.test(token)) throw new Error(t('set.jiraTokenBad')); // printable, no spaces: nothing to break a header
     if (!safeStorage.isEncryptionAvailable()) throw new Error(t('set.jiraTokenNoCrypt')); // never kept in plain text instead
@@ -2206,7 +2203,7 @@ handle('jira:tokenSet', async (e, value: unknown) => {
   if (status === 'ready') void jiraLinks().catch(err => log('jira links:', errorText(err))); // the chat's links ask again
 });
 handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
-  if (settings.jiraUrl) webWindow(`${settings.jiraUrl.replace(/\/+$/, '')}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
+  if (settings.jiraUrl) webWindow(`${jiraBase()}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
 });
 handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
 handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);

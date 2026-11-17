@@ -381,10 +381,11 @@ export const callPress = (page: WebContents, what: 'mic' | 'video' | 'hand' | 'r
 // Keys with no text yet, or an expired one, go to onKeys, jiraText brings the answer; a click on a key goes to onOpen.
 // base '' takes it all away.
 const JIRA = 'tbJira', JIRA_OPEN = 'tbJiraOpen';
+export const JIRA_KEY = /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/;
 export async function watchJira(base: string, onKeys: (keys: string[]) => void, onOpen: (key: string) => void) {
   await bind(JIRA, payload => {
     const keys: unknown = JSON.parse(payload);
-    if (Array.isArray(keys)) onKeys(keys.filter(k => typeof k === 'string' && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(k)).slice(0, 50));
+    if (Array.isArray(keys)) onKeys(keys.filter(k => typeof k === 'string' && JIRA_KEY.test(k)).slice(0, 50));
   });
   let opened = 0; // one ticket a second at most, whatever the page sends
   await bind(JIRA_OPEN, key => { if (Date.now() - opened > 1000) { opened = Date.now(); onOpen(key); } });
