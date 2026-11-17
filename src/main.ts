@@ -1283,16 +1283,16 @@ let updateShown = ''; // told once a run
 async function checkUpdate() {
   if (!app.isPackaged) return; // a dev run is no installed version
   try {
-    const r = await net.fetch('https://api.github.com/repos/CrossWander/Soroka/releases/latest',
-      { headers: { accept: 'application/vnd.github+json', 'user-agent': `Soroka/${app.getVersion()}` }, credentials: 'omit' });
+    // the releases' feed, not GitHub's API: an office's computers share one address, whose 60 API calls an hour run out (403)
+    const opts = { headers: { 'user-agent': `Soroka/${app.getVersion()}` }, credentials: 'omit' as const };
+    const r = await net.fetch(`${RELEASES}.atom`, opts);
     if (!r.ok) return log(`update check: ${r.status}`);
-    const rel = await r.json() as { tag_name?: unknown; assets?: { name?: unknown; browser_download_url?: unknown }[] };
-    const version = /^v(\d+\.\d+\.\d+)$/.exec(String(rel.tag_name))?.[1];
+    const version = /\/releases\/tag\/v(\d+\.\d+\.\d+)"/.exec(await r.text())?.[1]; // the newest release comes first
     if (!version || version === updateShown || !newer(version, app.getVersion())) return;
     // the installer of that very release, from this repository only
-    const url = `${RELEASES}/download/v${version}/Soroka-Setup-${version}.exe`;
-    if (!rel.assets?.some(a => a.browser_download_url === url)) return log(`update: ${version} has no installer yet`);
-    if (!rel.assets?.some(a => a.browser_download_url === `${url}.sig`)) return log(`update: ${version} is not signed yet`); // asked again tomorrow
+    const url = `${RELEASES}/download/v${version}/Soroka-Setup-${version}.exe`, there = async (u: string) => (await net.fetch(u, { ...opts, method: 'HEAD' })).ok;
+    if (!(await there(url))) return log(`update: ${version} has no installer yet`);
+    if (!(await there(`${url}.sig`))) return log(`update: ${version} is not signed yet`); // asked again tomorrow
     updateShown = version;
     log(`update: ${version} is out`);
     toast({ title: t('update.title', { v: version }), message: t('update.text', { cur: app.getVersion() }), tone: 'accent', long: true,
