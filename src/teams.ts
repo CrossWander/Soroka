@@ -579,6 +579,57 @@ export async function openChat<T extends ChatRef>(c: T) {
   await exists('[id^="message-body-"]');
   return c;
 }
+// The chat in the user's sight and where in it: the message at the top of the view and how far down it sat (no spot at the
+// newest messages, where Teams opens a chat itself). None under Soroka's "select a chat" (pickHint).
+export type LeftOff = { id: string; spot?: { mid: string; at: number } };
+export const leftOff = (): Promise<LeftOff | undefined> => run(h => {
+  const id = !document.documentElement.hasAttribute('data-soroka-pick') && document.querySelector(h)?.id.replace('chat-header-', '');
+  if (!id) return undefined;
+  const v = document.querySelector('[data-tid="message-pane-list-viewport"]');
+  if (!v || v.scrollHeight - v.scrollTop - v.clientHeight < 50) return { id };
+  const top = v.getBoundingClientRect().top;
+  const m = [...v.querySelectorAll<HTMLElement>('[data-tid="chat-pane-message"][data-mid]')].find(e => e.getBoundingClientRect().top >= top);
+  return { id, spot: m && { mid: m.dataset.mid, at: Math.round(m.getBoundingClientRect().top - top) } };
+}, HEADER);
+// Back there: Teams opens a chat at its newest messages and loads older ones as the view nears the top, so it goes up
+// until the message is there (a few loads), then puts it where it was.
+export async function backTo(c: LeftOff) {
+  await openChat({ id: c.id, title: c.id });
+  for (let i = 0; c.spot && i < 8; i++, await sleep(700)) if (await run(({ mid, at }) => {
+    const v = document.querySelector('[data-tid="message-pane-list-viewport"]');
+    if (!v) return false;
+    const m = v.querySelector(`[data-mid="${CSS.escape(mid)}"]`);
+    if (!m) { v.scrollTop = 0; return false; }
+    v.scrollTop += m.getBoundingClientRect().top - v.getBoundingClientRect().top - at;
+    return true;
+  }, c.spot)) return;
+}
+// Soroka's own "nothing open" (a picture, a title, a line) over the self-chat a hidden window parks on, as Teams shows on
+// start; the parked chat's mark in the list goes too: its background, its brighter text and its "⋯", in the colour of a chat
+// at rest. The first click outside it (the user's, or Soroka's own in the list) or key takes it away; null, a chat opened
+// for the user.
+export const pickHint = (hint: { picture: string; title: string; line: string } | null) => run(hint => {
+  const root = document.documentElement;
+  if (!hint) return root.removeAttribute('data-soroka-pick');
+  let s = document.getElementById('soroka-pick');
+  if (!s) {
+    s = document.head.appendChild(document.createElement('style'));
+    s.id = 'soroka-pick';
+    const off = (e: Event) => { if (e.type === 'keydown' || !(e.target as Element).closest?.('[data-tid="app-layout-area--main"]')) root.removeAttribute('data-soroka-pick'); };
+    addEventListener('pointerdown', off, true);
+    addEventListener('keydown', off, true);
+  }
+  const rest = [...document.querySelectorAll('[role="treeitem"][data-item-type="chat"][tabindex="-1"]')]
+    .find(e => !(e.getAttribute('aria-labelledby') || '').includes('chat_list_unread_text'))?.querySelector('[id^="title-chat-list-item_"]');
+  const on = 'html[data-soroka-pick] [data-tid="app-layout-area--main"]', item = 'html[data-soroka-pick] [role="treeitem"][data-item-type="chat"][tabindex="0"]';
+  s.textContent = `html[data-soroka-pick] [data-tid="app-layout-area--header"],${on}{visibility:hidden}
+    ${on}::before{visibility:visible;content:url(${hint.picture}) "\\A" ${JSON.stringify(hint.title)};white-space:pre-line;position:absolute;left:0;right:0;top:calc(50% - 130px);text-align:center;font-size:16px;font-weight:600;line-height:1.6}
+    ${on}::after{visibility:visible;content:${JSON.stringify(hint.line)};position:absolute;left:0;right:0;top:calc(50% + 72px);text-align:center;font-size:14px;opacity:.75}
+    ${item} .fui-TreeItemLayout{background:transparent!important}
+    ${item} .fui-TreeItemLayout *{color:${rest ? getComputedStyle(rest).color : 'inherit'}!important}
+    ${item} button{visibility:hidden}`;
+  root.setAttribute('data-soroka-pick', '');
+}, hint);
 
 // Own messages carry Fluent's ChatMyMessage class; consecutive messages may show the author only once.
 export const lastMessages = (n: number): Promise<Message[]> => run(n => {

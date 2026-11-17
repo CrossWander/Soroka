@@ -507,7 +507,10 @@ function createTeamsWindow() {
   teamsWin.on('hide', () => {
     closeMenu();
     closeSettings();
-    if (status === 'ready') serial(async () => { await restoreChat(); await teams.trimMemory(); trimRam(); }).catch(e => log('park:', errorText(e))); // trimMemory: ~35 MB of a fresh page
+    if (status === 'ready') serial(async () => {
+      leftChat = await teams.leftOff().catch(() => undefined); // to come back to when the window opens
+      await restoreChat(); await teams.trimMemory(); trimRam(); // trimMemory: ~35 MB of a fresh page
+    }).catch(e => log('park:', errorText(e)));
   });
   newTeamsPage();
 }
@@ -646,20 +649,44 @@ function signIn(check = false) {
     if ((e as { code?: string }).code !== 'ERR_ABORTED') { log('sign-in:', errorText(e)); win.close(); }
   });
 }
+// The picture of "nothing open" (teams.pickHint): the app's magpie on its purple disc between two chat bubbles in Teams' colours.
+let pickSvg = '';
+const pickPicture = () => pickSvg ||= 'data:image/svg+xml;base64,' + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="260" height="170">
+  <circle cx="130" cy="104" r="62" fill="#5B5FC7"/>
+  <image x="62" y="36" width="136" height="136" href="data:image/png;base64,${icon.png(272, { bare: true }).toString('base64')}"/>
+  <rect x="14" y="20" width="88" height="46" rx="16" fill="#E8EBFA"/><path d="M78 62 L96 78 L92 60 Z" fill="#E8EBFA"/>
+  <rect x="30" y="34" width="56" height="6" rx="3" fill="#7F85F5"/><rect x="30" y="47" width="36" height="6" rx="3" fill="#7F85F5"/>
+  <rect x="166" y="6" width="82" height="44" rx="16" fill="#7F85F5"/><path d="M184 46 L170 62 L196 48 Z" fill="#7F85F5"/>
+  <circle cx="190" cy="28" r="4.5" fill="#fff"/><circle cx="207" cy="28" r="4.5" fill="#fff"/><circle cx="224" cy="28" r="4.5" fill="#fff"/>
+</svg>`).toString('base64');
+// The chat in the user's sight when the window hid, and where in it; what a card opens with the window instead.
+let leftChat: teams.LeftOff | undefined, opening: (() => Promise<unknown>) | undefined;
 // One click on the tray icon: the Teams window, as in the Teams app.
 function showTeams() {
+  const parked = status === 'ready' && !teamsWin.isVisible(); // hidden, it went to the self-chat (its 'hide')
   closeSettings(); // every way here (the tray, a toast, a sign-in, "Open" in the settings) wants the Teams page itself
   if (teamsWin.isMinimized()) teamsWin.restore();
   teamsWin.show();
   teamsWin.focus();
   teamsPage.focus();
-  // a long-lived page drifts from the real state (stale badges, deleted messages with "Undo"): reload it if it is old — never during a call
-  if (status === 'ready' && Date.now() - loadedAt > 30 * 60_000) void (async () => { if (!(await calling())) await serial(() => connect(false)); })();
+  void (async () => {
+    // a long-lived page drifts from the real state (stale badges, deleted messages with "Undo"): reload it if it is old — never during a call
+    if (status === 'ready' && Date.now() - loadedAt > 30 * 60_000 && !(await calling())) await serial(() => connect(false));
+    // then back to the user's chat where they were, or what a card opens; nothing to go back to (a start): "select a chat"
+    // over the parked self-chat, as Teams starts with none open
+    if (parked || opening) await serial(async () => {
+      const left = leftChat, open = opening;
+      leftChat = opening = undefined;
+      if (open) { await teams.pickHint(null); await open(); }
+      else if (left) await teams.backTo(left);
+      else if (parked) await teams.pickHint({ picture: pickPicture(), title: t('teams.pickTitle'), line: t('teams.pickLine') });
+    });
+  })().catch(e => log('show:', errorText(e)));
 }
 // A call rings or goes on: reloading the page would drop it.
 const calling = async () => !!ring || teamsPage.isCurrentlyAudible() || await teams.inCall().catch(() => false);
 let loadedAt = 0;
-const openInTeams = (chatId: string) => { showTeams(); void serial(() => teams.openChat({ id: chatId, title: chatId })).catch(e => log('open chat:', errorText(e))); };
+const openInTeams = (chatId: string) => { opening = () => teams.openChat({ id: chatId, title: chatId }); showTeams(); };
 const windowInUse = () => teamsWin.isVisible() && !teamsWin.isMinimized();
 // What a hidden Soroka does not touch leaves RAM for the page file, as the Teams app does in the background (Windows only):
 // measured 1.6 GB of RAM down to ~150 MB, growing back slowly; the window opens a moment slower after. During a call only
@@ -1504,6 +1531,7 @@ function popOutCall(what: string) {
   // only the call: Teams' left rail and its title bar (search, the Office menu) stay in the chats window. The rail goes with
   // its whole layout area: hidden alone, it left its grid column as an empty band on the left
   void page.insertCSS('[data-tid="app-layout-area--nav"],[data-tid="title-bar"]{display:none!important}', { cssOrigin: 'user' });
+  void page.executeJavaScript(`document.documentElement.removeAttribute('data-soroka-pick')`).catch(() => {}); // the call under "select a chat" (pickHint)
   // leaving: Teams' own hang-up first, so the others see it at once, then the page goes and its memory with it
   win.on('close', () => {
     state.callBounds = win.getNormalBounds(); saveState();
@@ -1844,7 +1872,7 @@ async function checkActivity() {
   state.activitySeen.splice(200);
   saveState();
 }
-const openActivity = (id: string) => { showTeams(); void serial(() => teams.openActivity(id)).catch(e => log('open activity:', errorText(e))); };
+const openActivity = (id: string) => { opening = () => teams.openActivity(id); showTeams(); };
 
 function startTimer() {
   clearInterval(timer);

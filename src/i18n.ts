@@ -40,6 +40,8 @@ const S: Record<string, [string, string, string]> = {
   'strip.refresh': ['⟳ Оновити Teams', '⟳ Reload Teams', '⟳ Обновить Teams'],
   'strip.refreshTip': ['Перезавантажити Teams · F5', 'Reload Teams · F5', 'Перезагрузить Teams · F5'],
   'strip.settingsTip': ['Налаштування', 'Settings', 'Настройки'],
+  'teams.pickTitle': ['Сорока на варті', 'Soroka is on watch', 'Сорока на страже'],
+  'teams.pickLine': ['Нові повідомлення прийдуть карткою — або виберіть чат ліворуч', 'New messages come as cards, or pick a chat on the left', 'Новые сообщения придут карточкой — или выберите чат слева'],
   'toast.close': ['Закрити', 'Close', 'Закрыть'],
   'toast.openChat': ['Відкрийте чат', 'Open a chat', 'Откройте чат'],
   'toast.replyHere': ['Відповідь пропонується для чату, відкритого у вікні Teams.', 'Replies are suggested for the chat open in the Teams window.', 'Ответ предлагается для чата, открытого в окне Teams.'],

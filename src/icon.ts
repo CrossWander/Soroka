@@ -52,8 +52,8 @@ const label = (s: string, cx: number, cy: number, cell: number): Shape => {
   };
 };
 
-/** RGBA pixels of a size×size icon; `badge` is "1".."9", "9+" or "!"; `grey` while not connected. */
-export function draw(size: number, { badge, grey }: { badge?: string; grey?: boolean } = {}) {
+/** RGBA pixels of a size×size icon; `badge` is "1".."9", "9+" or "!"; `grey` while not connected; `bare`: the magpie alone. */
+export function draw(size: number, { badge, grey, bare }: { badge?: string; grey?: boolean; bare?: boolean } = {}) {
   const tile = grey ? GREY : PURPLE, k = size / 32;
   const m = size > 32 ? 1 : 0; // no margin at tray sizes: there it only made the tile smaller than its neighbours and blurred its edge
   // the magpie faces left, so a badge in the bottom right corner covers only its tail
@@ -62,7 +62,7 @@ export function draw(size: number, { badge, grey }: { badge?: string; grey?: boo
   const rim = Math.max(0.6, 0.75 / k), sleeve = both(ellipse(16, 17.5, 7.2 - rim, 4.9 - rim, 22), ellipse(18, 15.8, 6.2 - rim, 2.4 - rim, 22));
   const [red, black] = embroidery(18, 15.8, 22, size, k);
   const layers: [Shape, RGBA | null][] = [ // design grid 32×32, later layers on top; null cuts a hole
-    [rrect(m, m, 32 - m, 32 - m, 7), tile],
+    [rrect(m, m, 32 - m, 32 - m, 7), bare ? null : tile],
     [any(tri(19.5, 18, 21, 21.5, 29.5, 29), tri(19.5, 18, 29.5, 29, 30.5, 26.5)), INK], // the long tail, down to the right
     [any(body, circle(9.2, 10.6, 3.9), ellipse(11.6, 13.4, 3.4, 3, -35)), INK], // body, head and neck
     [tri(6, 9.4, 1.8, 11, 6, 12.5), INK], // beak
