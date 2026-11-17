@@ -53,7 +53,7 @@ const handle = (channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...a: any[
 // ---------- settings & state ----------
 type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
   onlyFrom: string; keywords: string; quietFrom: string; quietTo: string; digestAt: string; jiraUrl: string;
-  muteFrom: string; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; officeMenu: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean;
+  muteFrom: string; groups: boolean; quietDnd: boolean; tones: string; remindAfter: string; followUpAfter: string; quickReplies: string; triage: boolean; links: string; officeMenu: boolean; activity: boolean; theme: string; aiSkip: string; webChat: string; aiOff: boolean;
   agent: string; projectDir: string; projectAsk: boolean; handoffKeep: string }; // activity: mentions in channels, from Teams' Activity; theme: '' = the system's
 // aiOff: no AI at all — the app only notifies; no AI program is started
 // agent: the user's AI agent a card's chat goes to (agents.ts), '' = none chosen; projectDir: the folder it opens in, or
@@ -73,7 +73,7 @@ const firstRun = !fs.existsSync(file('settings.json'));
 let settings = readJson<Settings>('settings.json', { wakeMode: 'notify', draftModel: 'claude:claude-haiku-5-5', summaryModel: 'claude:claude-opus-5-5',
   label: true, autostart: false, summaryBackground: true, style: '', language: '', // language '' = the system's, resolved at start
   onlyFrom: '', keywords: '', quietFrom: '', quietTo: '', digestAt: '', jiraUrl: '',
-  muteFrom: '', quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false,
+  muteFrom: '', groups: false, quietDnd: true, tones: '', remindAfter: '240', followUpAfter: '240', quickReplies: '', triage: false, links: '', officeMenu: true, activity: true, theme: '', aiSkip: '', webChat: '', aiOff: false,
   agent: '', projectDir: '', projectAsk: false, handoffKeep: '24' }); // a day: a request left in the agent's field still finds its chat.md
 // The theme of every window, Teams' page included: its pages follow prefers-color-scheme, which nativeTheme sets.
 nativeTheme.themeSource = (settings.theme || 'system') as 'system' | 'light' | 'dark';
@@ -81,7 +81,7 @@ const isText = (max: number) => (v: unknown) => typeof v === 'string' && v.lengt
 const isTime = (v: unknown) => v === '' || (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v));
 const CHECKS: Record<string, (v: unknown) => boolean> = {
   style: isText(3000), onlyFrom: isText(1000), keywords: isText(1000), quietFrom: isTime, quietTo: isTime, digestAt: isTime,
-  muteFrom: isText(1000), tones: isText(3000), quickReplies: isText(500), quietDnd: v => typeof v === 'boolean', triage: v => typeof v === 'boolean', officeMenu: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
+  muteFrom: isText(1000), tones: isText(3000), quickReplies: isText(500), groups: v => typeof v === 'boolean', quietDnd: v => typeof v === 'boolean', triage: v => typeof v === 'boolean', officeMenu: v => typeof v === 'boolean', activity: v => typeof v === 'boolean', aiSkip: isText(1000), aiOff: v => typeof v === 'boolean',
   jiraUrl: v => v === '' || (isText(200)(v) && /^https:\/\/[^\s/]+(\/\S*)?$/.test(v as string)),
   label: v => typeof v === 'boolean', autostart: v => typeof v === 'boolean', summaryBackground: v => typeof v === 'boolean',
   draftModel: v => usable().includes(v as string), summaryModel: v => usable().includes(v as string),
@@ -146,13 +146,14 @@ if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify';
 // improve: "Improve my text" — `last` is the user's own unsent text from the compose box, and sending replaces it
 // nudge: a reminder about the user's own question nobody answered (`last`); it closes when an answer comes
 // urgent: an @mention or a keyword hit, never held back; held: "AI sorts" found it waits for nothing from the user
+// fyi: a group's message that only "Every message in group chats" brought (no AI reply unasked, no reminder)
 // hushed: came in quiet hours, announced when they end; preview: the chat's last message when a card made by request was
 // first seen in the list (a new one of the user's own closes the card)
 // kept: `text` is the user's own, typed in a card or in "Replies" (draft:keep): it stays over the chat's next message and goes
 // without the AI label
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
   context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean;
-  nudge?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
+  nudge?: boolean; urgent?: boolean; fyi?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
 // msgs: the messages of an incoming card, as they came one by one (the chat list's preview, or the opened chat's text in
 // drafts mode); who: their author in a group; me: the message the card came for in a group (the mention, the keyword)
 type Msg = { who?: string; text: string; time: string; me?: boolean };
@@ -1378,7 +1379,10 @@ async function learnStyle() {
 // ---------- watching for personal messages and @mentions ----------
 const withLabel = (t: string) => (settings.label && !t.startsWith('🤖') ? `🤖 ${t}` : t);
 const keywordHit = (c: teams.Chat) => list(settings.keywords).some(k => `${c.title} ${c.preview}`.toLowerCase().includes(k));
-const wanted = (c: teams.Chat) => c.unread && (c.type === 'direct' || c.mention || keywordHit(c));
+// a message for the user (personal, an @mention, a keyword hit); "Every message in group chats" brings a group's others too
+const called = (c: teams.Chat) => c.type === 'direct' || c.mention || keywordHit(c);
+const groupWide = (c: teams.Chat) => settings.groups && c.type === 'group';
+const wanted = (c: teams.Chat) => c.unread && (called(c) || groupWide(c));
 // "Never from" (bots, recordings, noisy chats) wins over everything; "Only from": personal messages and @mentions from the
 // listed people only; keyword hits always count. A name counts in the chat's title and as the author of its last message
 // ("Author: text" in a group's preview), as a whole word: a name in a message's text, or a part of another name, does not.
@@ -1672,7 +1676,7 @@ function remind() {
   if (hushed.length) saveState();
   for (const [n, d] of waiting()) {
     if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; d.reminded = true; draftsChanged(); announce(n, t('toast.snoozed')); continue; } // not "awaiting" right after
-    if (d.incoming && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
+    if (d.incoming && !d.fyi && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
       d.reminded = true; saveState(); announce(n, t('toast.awaiting'));
     }
   }
@@ -1764,7 +1768,7 @@ async function scan(openId?: string) {
   openLook = open ? look(open) : '';
   // read at once there, never unread: a new one from the other side counts as unread, a personal one or a keyword hit
   const readBehind = (c: teams.Chat) => behindOpen(c.id, openId) && lastLook.startsWith(`${c.id}|`) && lastLook !== look(c) && !MINE.test(c.preview)
-    && (c.type === 'direct' || keywordHit(c));
+    && (c.type === 'direct' || keywordHit(c) || groupWide(c));
   // a group still unread since its @mention card: its next messages join that card's draft without a second card
   const stillMentioned = mentioned;
   mentioned = new Set(chats.filter(c => c.unread && c.mention && c.type !== 'direct').map(c => c.id));
@@ -1777,7 +1781,8 @@ async function scan(openId?: string) {
     let context: string[] | undefined, last = c.preview; // the preview is cut by Teams; the opened chat gives the whole message
     const who = authorOf(c);
     let msg: Msg = { who: who || undefined, text: who ? c.preview.slice(who.length + 2) : c.preview, time: c.time };
-    if (mode() === 'drafts' && !aiSkipped(c.title)) {
+    const fyi = !called(c) && !onCard(c); // only "every message in group chats" brought it: no AI reply unasked, no reminder, the group stays unread
+    if (mode() === 'drafts' && !aiSkipped(c.title) && !fyi) {
       await teams.openChat(c);
       const msgs = await teams.lastMessages(15);
       const m = msgs.at(-1);
@@ -1789,16 +1794,17 @@ async function scan(openId?: string) {
     seen();
     if (mode() === 'monitor' && !aiSkipped(c.title) && !skippedAuthor(who)) // events.log is read by Claude sessions
       fs.appendFileSync(file('events.log'), JSON.stringify({ at: new Date().toISOString(), chat: c.title, type: c.type, last }) + '\n');
-    const note = c.type === 'direct' ? c.title : t(c.mention ? 'toast.mention' : 'toast.keyword', { title: c.title });
+    const note = c.type === 'direct' ? c.title : t(c.mention ? 'toast.mention' : fyi ? 'toast.group' : 'toast.keyword', { title: c.title });
     const old = waiting().find(([, d]) => d.chatId === c.id && !d.improve)?.[0], urgent = c.mention || keywordHit(c);
-    if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, incoming: true, urgent, msgs: [{ ...msg, me: c.type !== 'direct' }] })); continue; }
+    if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, incoming: true, urgent, fyi, msgs: [{ ...msg, me: c.type !== 'direct' && !fyi }] })); continue; }
     // A newer message joins what the card answers, and wakes a snoozed one. A direct chat's card gathers all the user has not
-    // read; a group's starts again from the message that called it, unless its card is still up (then that one keeps its why).
-    // Text the user typed for it stays. Still unread since its @mention card (quietly): the message joins it, no second card.
+    // read, and so does a group's of every message; a group's starts again from the message that called it, unless its card
+    // is still up (then that one keeps its why). Text the user typed for it stays. Still unread since its @mention card
+    // (quietly): the message joins it, no second card.
     const d = state.drafts[old], up = carded(old), quietly = !up && stillMentioned.has(c.id);
-    const msgs = c.type === 'direct' || up || quietly ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
+    const msgs = c.type === 'direct' || fyi || up || quietly ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
     Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', incoming: true, msgs,
-      ...(up || quietly ? {} : { note, urgent }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
+      ...(up || quietly ? {} : { note, urgent, fyi }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
     draftsChanged();
     if (!quietly) found.push(old);
   }
@@ -1830,7 +1836,7 @@ async function tick() {
     // its variants follow; in quiet hours it waits for them to end (remind).
     await Promise.all(found.map(async n => {
       if (await held(n)) return; // waits for nothing from the user: in the hourly round-up
-      const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d) && !carded(n); // a card up already: its ✨ makes them on demand
+      const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d) && !carded(n) && !d.fyi; // a card up already: its ✨ makes them on demand
       if (quiet()) { d.hushed = true; saveState(); }
       else announce(n, auto ? t('toast.replyBusy') : undefined);
       if (auto) void suggest(n, { auto: true }).then(() => variantsReady(n)); // not awaited: the next look does not wait for the AI

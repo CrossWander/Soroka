@@ -22,7 +22,7 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 ## Features
 
 **Notifications**
-- Cards for personal messages, @mentions and keywords, also in group chats. Mentions in channels come from Teams' Activity feed.
+- Cards for personal messages, @mentions and keywords, also in group chats; "Every message in group chats" brings all of a group's. Mentions in channels come from Teams' Activity feed.
 - Filters: «Only from», «Never from» and quiet hours. Messages that arrive in quiet hours are announced when the quiet hours end.
 - Reminders. A message that is still unanswered comes back after a set time, and a question of yours that got no reply can be followed up in one click.
 - Optionally, the AI sorts incoming messages. What needs you comes at once; the rest comes as one card an hour.
