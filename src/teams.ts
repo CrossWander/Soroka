@@ -606,8 +606,8 @@ export async function backTo(c: LeftOff) {
 }
 // Soroka's own "nothing open" (a picture, a title, a line) over the self-chat a hidden window parks on, as Teams shows on
 // start; the parked chat's mark in the list goes too: its background, its brighter text and its "⋯", in the colour of a chat
-// at rest. The first click outside it (the user's, or Soroka's own in the list) or key takes it away; null, a chat opened
-// for the user.
+// at rest. Empty texts: a blank cover. The first click outside it (the user's, or Soroka's own in the list) or key takes it
+// away; null, a chat opened for the user.
 export const pickHint = (hint: { picture: string; title: string; line: string } | null) => run(hint => {
   const root = document.documentElement;
   if (!hint) return root.removeAttribute('data-soroka-pick');
@@ -623,7 +623,7 @@ export const pickHint = (hint: { picture: string; title: string; line: string } 
     .find(e => !(e.getAttribute('aria-labelledby') || '').includes('chat_list_unread_text'))?.querySelector('[id^="title-chat-list-item_"]');
   const on = 'html[data-soroka-pick] [data-tid="app-layout-area--main"]', item = 'html[data-soroka-pick] [role="treeitem"][data-item-type="chat"][tabindex="0"]';
   s.textContent = `html[data-soroka-pick] [data-tid="app-layout-area--header"],${on}{visibility:hidden}
-    ${on}::before{visibility:visible;content:url(${hint.picture}) "\\A" ${JSON.stringify(hint.title)};white-space:pre-line;position:absolute;left:0;right:0;top:calc(50% - 130px);text-align:center;font-size:16px;font-weight:600;line-height:1.6}
+    ${on}::before{visibility:visible;content:${hint.picture ? `url(${hint.picture}) "\\A" ` : ''}${JSON.stringify(hint.title)};white-space:pre-line;position:absolute;left:0;right:0;top:calc(50% - 130px);text-align:center;font-size:16px;font-weight:600;line-height:1.6}
     ${on}::after{visibility:visible;content:${JSON.stringify(hint.line)};position:absolute;left:0;right:0;top:calc(50% + 72px);text-align:center;font-size:14px;opacity:.75}
     ${item} .fui-TreeItemLayout{background:transparent!important}
     ${item} .fui-TreeItemLayout *{color:${rest ? getComputedStyle(rest).color : 'inherit'}!important}

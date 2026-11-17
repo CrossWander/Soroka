@@ -660,6 +660,7 @@ const pickPicture = () => pickSvg ||= 'data:image/svg+xml;base64,' + Buffer.from
   <rect x="166" y="6" width="82" height="44" rx="16" fill="#7F85F5"/><path d="M184 46 L170 62 L196 48 Z" fill="#7F85F5"/>
   <circle cx="190" cy="28" r="4.5" fill="#fff"/><circle cx="207" cy="28" r="4.5" fill="#fff"/><circle cx="224" cy="28" r="4.5" fill="#fff"/>
 </svg>`).toString('base64');
+const onWatch = () => ({ picture: pickPicture(), title: t('teams.pickTitle'), line: t('teams.pickLine') });
 // The chat in the user's sight when the window hid, and where in it; what a card opens with the window instead.
 let leftChat: teams.LeftOff | undefined, opening: (() => Promise<unknown>) | undefined;
 // One click on the tray icon: the Teams window, as in the Teams app.
@@ -679,8 +680,8 @@ function showTeams() {
       const left = leftChat, open = opening;
       leftChat = opening = undefined;
       if (open) { await teams.pickHint(null); await open(); }
-      else if (left) await teams.backTo(left);
-      else if (parked) await teams.pickHint({ picture: pickPicture(), title: t('teams.pickTitle'), line: t('teams.pickLine') });
+      else if (left) { await teams.backTo(left); await teams.pickHint(null); } // its click took the blank cover away, unless it was the self-chat
+      else if (parked) await teams.pickHint(onWatch());
     });
   })().catch(e => log('show:', errorText(e)));
 }
@@ -719,7 +720,11 @@ function trimRam() {
 async function restoreChat(before?: string) {
   try {
     if (before) await teams.openChat({ id: before, title: before });
-    else if (!windowInUse()) { await teams.showChats(); await teams.openChat(await teams.selfChat()); } // the user may have left it on Activity
+    else if (!windowInUse()) {
+      await teams.showChats(); await teams.openChat(await teams.selfChat()); // the user may have left it on Activity
+      // covered till the window opens, so it never shows the self-chat: blank when the user's chat comes back, else "on watch"
+      await teams.pickHint(leftChat ? { picture: '', title: '', line: '' } : onWatch());
+    }
   } catch (e) { log('restore chat:', errorText(e)); }
 }
 // Work in a chat the app opens itself (sending, a reaction, reading): the user's own chat comes back after it, or a hidden
@@ -808,6 +813,7 @@ async function connect(openForLogin: boolean) {
   } finally { connecting = false; reloadNow = false; }
   await watch();
   if (keep) await teams.openChat({ id: keep, title: keep }).catch(() => {});
+  else await restoreChat(); // hidden, Teams opened the chat last in view, whose new messages it would read unseen: park
   status = 'ready'; refreshTray();
   loadedAt = Date.now();
   log('connected');
