@@ -76,7 +76,7 @@
       .map(([v, label]) => Object.assign(el('option', '', label), { value: v })));
     later.setAttribute('aria-label', t('drafts.later'));
     later.onchange = () => later.value && bridge.invoke('draft:snooze', d.n, Number(later.value));
-    later.hidden = !!d.improve; // "Improve my text" answers no one: nothing to be reminded of
+    later.hidden = d.kind === 'improve'; // "Improve my text" answers no one: nothing to be reminded of
     const links = el('span', 'links'); links.append(later, handoff, open);
     const note = el('div', 'note'); note.append(el('span', '', d.note), links);
     box.append(note);
@@ -92,7 +92,7 @@
     react.onclick = () => bridge.invoke('react:open', d.n);
     const quote = el('input'); quote.type = 'checkbox'; // "Reply with quote" to the other side's latest message
     const quoteRow = el('label', 'quote'); quoteRow.append(quote, t('drafts.quote'));
-    react.hidden = quoteRow.hidden = !!(d.improve || d.nudge); // "Improve my text" answers no one; a nudge follows the user's own question
+    react.hidden = quoteRow.hidden = d.kind === 'improve' || d.kind === 'nudge'; // "Improve my text" answers no one; a nudge follows the user's own question
     const reject = el('button', 'reject', t('drafts.reject'));
     const send = el('button', 'send', t('drafts.send'));
     const act = async fn => {
@@ -118,7 +118,7 @@
     box.append(said, jira, variants, quick, busy, area, quoteRow, err, foot);
     box.update = (d, ready, aiOff, phrases) => {
       current = d;
-      quick.replaceChildren(...(d.improve || d.nudge ? [] : phrases).map(q => { // the user's own text or a nudge: no quick answer fits
+      quick.replaceChildren(...(d.kind === 'improve' || d.kind === 'nudge' ? [] : phrases).map(q => { // the user's own text or a nudge: no quick answer fits
         const b = el('button', '', q);
         b.onclick = () => { area.value = q; [...variants.children].forEach(x => x.classList.remove('on')); area.focus(); };
         return b;

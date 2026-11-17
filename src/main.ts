@@ -141,19 +141,21 @@ settings.draftModel = ({ haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5' 
 for (const k of ['draftModel', 'summaryModel'] as const) if (!settings[k].includes(':')) settings[k] = `claude:${settings[k]}`; // before 0.10 every model was Claude's
 if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify'; // "off" and "loop" before 0.5.3: notifications no longer switch off
 
-// incoming: made for a message to the user (not by "Suggest reply" on any chat); remindAt: snoozed until then;
-// reminded: the "still waiting for your answer" reminder went out; answered: the user replied in Teams itself; read: read it there;
-// improve: "Improve my text" — `last` is the user's own unsent text from the compose box, and sending replaces it
-// nudge: a reminder about the user's own question nobody answered (`last`); it closes when an answer comes
+// kind, what the card is for: incoming — a message to the user; fyi — a group's message that only "Every message in group
+// chats" brought (no AI reply unasked, no reminder); request — made by "Suggest reply" or a Claude session on any chat;
+// improve — "Improve my text": `last` is the user's own unsent text from the compose box, and sending replaces it; nudge — a
+// reminder about the user's own question nobody answered (`last`), closed when an answer comes. A new message in the chat
+// makes any but improve an incoming card.
+// remindAt: snoozed until then; reminded: the "still waiting for your answer" reminder went out; answered: the user replied
+// in Teams itself; read: read it there
 // urgent: an @mention or a keyword hit, never held back; held: "AI sorts" found it waits for nothing from the user
-// fyi: a group's message that only "Every message in group chats" brought (no AI reply unasked, no reminder)
 // hushed: came in quiet hours, announced when they end; preview: the chat's last message when a card made by request was
 // first seen in the list (a new one of the user's own closes the card)
 // kept: `text` is the user's own, typed in a card or in "Replies" (draft:keep): it stays over the chat's next message and goes
 // without the AI label
 type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
-  context?: string[]; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number; incoming?: boolean; remindAt?: number; reminded?: boolean; improve?: boolean;
-  nudge?: boolean; urgent?: boolean; fyi?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
+  context?: string[]; kind: 'incoming' | 'fyi' | 'request' | 'improve' | 'nudge'; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number;
+  remindAt?: number; reminded?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
 // msgs: the messages of an incoming card, as they came one by one (the chat list's preview, or the opened chat's text in
 // drafts mode); who: their author in a group; me: the message the card came for in a group (the mention, the keyword)
 type Msg = { who?: string; text: string; time: string; me?: boolean };
@@ -178,6 +180,11 @@ ai.usage.onSpent = tokens => {
   saveState();
 };
 for (const d of Object.values(state.drafts)) delete d.busy; // a run cut short by a restart
+// cards saved before kind: its four flags (an answer joined to a nudge had both incoming and nudge: it is incoming)
+for (const d of Object.values(state.drafts) as (Draft & Partial<Record<'incoming' | 'fyi' | 'improve' | 'nudge', boolean>>)[]) if (!d.kind) {
+  d.kind = d.improve ? 'improve' : d.incoming ? (d.fyi ? 'fyi' : 'incoming') : d.nudge ? 'nudge' : 'request';
+  delete d.incoming; delete d.fyi; delete d.improve; delete d.nudge;
+}
 // the state stays small: handled cards a week, the last message seen of the 300 latest chats
 for (const [n, d] of Object.entries(state.drafts)) if (d.status !== 'pending' && Date.now() - d.at > 7 * 86_400_000) delete state.drafts[n];
 state.seen = Object.fromEntries(Object.entries(state.seen).slice(-300));
@@ -746,12 +753,12 @@ const currentChat = <T = undefined>(more?: () => Promise<T>) => serial(async () 
 async function suggestHere() {
   const c = await currentChat(() => teams.lastMessages(15));
   if (!c) return toast({ title: t('toast.openChat'), message: t('toast.replyHere') });
-  const existing = pending().find(d => d.chatId === c.id && !d.improve);
+  const existing = pending().find(d => d.chatId === c.id && d.kind !== 'improve');
   let n = existing?.n;
   if (!n) {
     const msgs = forAi(c.more);
     const last = [...msgs].reverse().find(m => !m.mine);
-    n = addDraft({ chatId: c.id, title: c.title, note: c.title, last: last ? `${last.author}: ${last.text}` : '', text: '', context: msgs.map(line), preview: 'preview' in c ? c.preview : undefined });
+    n = addDraft({ chatId: c.id, title: c.title, note: c.title, last: last ? `${last.author}: ${last.text}` : '', text: '', context: msgs.map(line), kind: 'request', preview: 'preview' in c ? c.preview : undefined });
   }
   await suggestThenShow(n);
 }
@@ -767,8 +774,8 @@ async function improveHere() {
   const c = await currentChat(async () => ({ text: (await teams.boxText()).trim(), msgs: await teams.lastMessages(10) }));
   const text = c?.more.text;
   if (!c || !text) return toast({ title: t('toast.writeFirst'), message: t('toast.improveHere') });
-  for (const d of pending()) if (d.chatId === c.id && d.improve) state.drafts[d.n].status = 'rejected'; // one card per chat: the newest text
-  await suggestThenShow(addDraft({ chatId: c.id, title: c.title, note: t('drafts.improveNote', { title: c.title }), last: text, text: '', context: forAi(c.more.msgs).map(line), improve: true, preview: 'preview' in c ? c.preview : undefined }));
+  for (const d of pending()) if (d.chatId === c.id && d.kind === 'improve') state.drafts[d.n].status = 'rejected'; // one card per chat: the newest text
+  await suggestThenShow(addDraft({ chatId: c.id, title: c.title, note: t('drafts.improveNote', { title: c.title }), last: text, text: '', context: forAi(c.more.msgs).map(line), kind: 'improve', preview: 'preview' in c ? c.preview : undefined }));
 }
 async function summaryHere() {
   const c = await currentChat();
@@ -1012,11 +1019,11 @@ const variantsRequest = (d: Draft, hint = ''): Request => { notToAi(d.title); re
     // the manner of this chat, from the user's own lines in it; a tone set for the person still comes last and wins
     + 'Where "Me" writes in the transcript, write the way they write in this chat (language, formal or informal address, length, emoji) rather than by the general style.\n'
     + (toneFor(d.title) ? `With this person: ${toneFor(d.title)}\n` : '')
-    + (d.improve
+    + (d.kind === 'improve'
       ? 'The user wrote the message below for this chat and wants it better. Suggest four versions of it: with spelling and grammar fixed '
         + 'and clearer, in the same tone; shorter; more polite and formal; translated into English (into Ukrainian if it is in English already). '
         + 'Keep its meaning and add nothing. Return only a JSON array of four strings, no explanations.'
-      : d.nudge
+      : d.kind === 'nudge'
       ? 'The user\'s last message in this chat is a question that has had no answer for hours. Suggest three short, polite reminders about it: '
         + 'neutral; warmer, with a light touch; brief and direct. Do not repeat the question word for word. '
         + 'Write them in the language of the conversation. Return only a JSON array of three strings, no explanations.'
@@ -1025,7 +1032,7 @@ const variantsRequest = (d: Draft, hint = ''): Request => { notToAi(d.title); re
     + (hint ? '\nThe user said what the reply must say (their note to you, below the transcript): every version says that, in their manner; '
       + 'it decides the content over anything you would infer from the transcript.' : ''),
   prompt: `Chat: ${d.title}\nTranscript:\n<<<\n${(d.context ?? []).join('\n')}\n>>>`
-    + (d.improve ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.nudge ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : '')
+    + (d.kind === 'improve' ? `\nThe user's message:\n<<<\n${d.last}\n>>>` : d.kind === 'nudge' ? `\nThe user's question:\n<<<\n${d.last}\n>>>` : '')
     + (hint ? `\nWhat the reply must say:\n<<<\n${hint}\n>>>` : ''),
 }; };
 // Windows: text on the clipboard with the formats that keep it out of the clipboard history (Win+V), the cloud clipboard
@@ -1683,7 +1690,7 @@ function remind() {
   if (hushed.length) saveState();
   for (const [n, d] of waiting()) {
     if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; d.reminded = true; draftsChanged(); announce(n, t('toast.snoozed')); continue; } // not "awaiting" right after
-    if (d.incoming && !d.fyi && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
+    if (d.kind === 'incoming' && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
       d.reminded = true; saveState(); announce(n, t('toast.awaiting'));
     }
   }
@@ -1704,8 +1711,8 @@ function remind() {
 async function nudge(chatId: string) {
   const a = state.asked[chatId];
   if (!a) return;
-  const n = waiting().find(([, d]) => d.chatId === chatId && d.nudge)?.[0]
-    ?? addDraft({ chatId, title: a.title, note: t('drafts.nudgeNote', { title: a.title }), last: a.text, text: t('drafts.nudgeText'), nudge: true });
+  const n = waiting().find(([, d]) => d.chatId === chatId && d.kind === 'nudge')?.[0]
+    ?? addDraft({ chatId, title: a.title, note: t('drafts.nudgeNote', { title: a.title }), last: a.text, text: t('drafts.nudgeText'), kind: 'nudge' });
   if (aiReady() && !skipDraft(state.drafts[n])) await suggestThenShow(n); else showDrafts(true);
 }
 // ponytail: Teams writes the user's own last message as "Вы: …" / "Ви: …" / "You: …" (ru/uk/en UI); other languages are not caught
@@ -1738,17 +1745,17 @@ function closeAnswered(chats: teams.Chat[], openId?: string) {
   for (const [k, d] of waiting()) {
     const c = chats.find(x => x.id === d.chatId);
     if (!c || d.busy) continue;
-    if (!d.incoming && !d.nudge) {
+    if (d.kind === 'request' || d.kind === 'improve') {
       if (d.preview === undefined) { d.preview = c.preview; changed = true; continue; } // a card from before 0.29
       if (c.preview !== d.preview && mine(c)) d.status = 'answered';
       else if (Date.now() - d.at > 86_400_000 && !d.remindAt) d.status = 'rejected';
       else continue;
     }
-    else if (d.nudge) { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
+    else if (d.kind === 'nudge') { if (mine(c)) continue; d.status = 'answered'; } // the other side answered the question
     else if (mine(c)) d.status = 'answered';
     // its card on screen keeps it: the user may be reading it there (its whole texts opened the chat)
     // drafts mode opens the chats itself, so read there says nothing of the user, unless the app left it unopened (fyi)
-    else if (k !== toastDraft && (mode() !== 'drafts' || d.fyi) && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept && !behindOpen(c.id, openId)) d.status = 'read';
+    else if (k !== toastDraft && (mode() !== 'drafts' || d.kind === 'fyi') && !c.unread && !d.variants?.length && !d.error && !d.remindAt && !d.kept && !behindOpen(c.id, openId)) d.status = 'read';
     else continue;
     delete d.context; delete d.msgs; changed = true;
   }
@@ -1803,17 +1810,18 @@ async function scan(openId?: string) {
     if (mode() === 'monitor' && !aiSkipped(c.title) && !skippedAuthor(who)) // events.log is read by Claude sessions
       fs.appendFileSync(file('events.log'), JSON.stringify({ at: new Date().toISOString(), chat: c.title, type: c.type, last }) + '\n');
     const note = c.type === 'direct' ? c.title : t(c.mention ? 'toast.mention' : fyi ? 'toast.group' : 'toast.keyword', { title: c.title });
-    const old = waiting().find(([, d]) => d.chatId === c.id && !d.improve)?.[0], urgent = c.mention || keywordHit(c);
-    if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, incoming: true, urgent, fyi, msgs: [{ ...msg, me: c.type !== 'direct' && !fyi }] })); continue; }
+    const old = waiting().find(([, d]) => d.chatId === c.id && d.kind !== 'improve')?.[0], urgent = c.mention || keywordHit(c);
+    if (!old) { found.push(addDraft({ chatId: c.id, title: c.title, note, last, text: '', context, kind: fyi ? 'fyi' : 'incoming', urgent, msgs: [{ ...msg, me: c.type !== 'direct' && !fyi }] })); continue; }
     // A newer message joins what the card answers, and wakes a snoozed one. A direct chat's card gathers all the user has not
     // read, and so does a group's of every message; a group's starts again from the message that called it, unless its card
     // is still up (then that one keeps its why). Text the user typed for it stays. Still unread since its @mention card
     // (quietly): the message joins it, no second card.
     const d = state.drafts[old], up = carded(old), quietly = !up && stillMentioned.has(c.id);
     const msgs = c.type === 'direct' || fyi || up || quietly ? [...(d.msgs ?? []), msg].slice(-30) : [{ ...msg, me: true }];
-    // nudge goes: a reminder about the user's question that the answer joined (it was busy) is an incoming card now
-    Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', incoming: true, nudge: undefined, msgs,
-      ...(up || quietly ? {} : { note, urgent, fyi }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
+    // the card is an incoming one now, a request's or a nudge's too (an answer that came while the reminder was being written)
+    const kind: Draft['kind'] = (up || quietly ? d.kind === 'fyi' : fyi) ? 'fyi' : 'incoming';
+    Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', kind, msgs,
+      ...(up || quietly ? {} : { note, urgent }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
     draftsChanged();
     if (!quietly) found.push(old);
   }
@@ -1845,7 +1853,7 @@ async function tick() {
     // its variants follow; in quiet hours it waits for them to end (remind).
     await Promise.all(found.map(async n => {
       if (await held(n)) return; // waits for nothing from the user: in the hourly round-up
-      const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d) && !carded(n) && !d.fyi; // a card up already: its ✨ makes them on demand
+      const d = state.drafts[n], auto = mode() === 'drafts' && !skipDraft(d) && !carded(n) && d.kind !== 'fyi'; // a card up already: its ✨ makes them on demand
       if (quiet()) { d.hushed = true; saveState(); }
       else announce(n, auto ? t('toast.replyBusy') : undefined);
       if (auto) void suggest(n, { auto: true }).then(() => variantsReady(n)); // not awaited: the next look does not wait for the AI
@@ -1911,8 +1919,8 @@ async function sendDraft(n: string, text: string, quote = false) {
     // A variant the card's one-line field lost its line breaks in goes as the AI wrote it.
     const variant = d.variants?.find(v => flat(v) === flat(text));
     if (variant) text = variant;
-    const fromAi = !!variant || (text === d.text && !!d.text && !d.nudge && !d.kept);
-    await inChat(d.chatId, () => teams.send({ id: d.chatId, title: d.title }, fromAi ? withLabel(text) : text, d.improve ? { replace: d.last } : { quote }));
+    const fromAi = !!variant || (text === d.text && !!d.text && d.kind !== 'nudge' && !d.kept);
+    await inChat(d.chatId, () => teams.send({ id: d.chatId, title: d.title }, fromAi ? withLabel(text) : text, d.kind === 'improve' ? { replace: d.last } : { quote }));
     d.status = 'sent';
     delete d.error; delete d.context; delete d.msgs;
     toast({ title: t('toast.sent'), message: `${d.title}: ${text}` });
@@ -2293,7 +2301,7 @@ function startApi() {
         const { chat, text, note } = await body(req);
         need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
         const c = await serial(() => teams.findChat(chat));
-        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, preview: c.preview });
+        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, kind: 'request', preview: c.preview });
         toast({ title: t('toast.claudeSuggests'), message: `${c.title}: ${text}`, tone: 'accent', long: true, click: () => showDrafts(true) });
         return json(res, 200, { draft: n });
       }
