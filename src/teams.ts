@@ -728,7 +728,9 @@ export const boxText = (): Promise<string> => run(b => {
 }, BOX);
 const boxQuote = () => exists(`${BOX} card`, 0); // "Reply with quote" puts the quoted message in the box as a card
 // A picture (or an emoji: Teams draws them as pictures too) in the box, or a file attached under it: the user's, not to go along.
-const boxHasFiles = (): Promise<boolean> => run(([b, files]) => !!document.querySelector(b)?.querySelector('img') || !!document.querySelector(files), [BOX, ATTACHED]);
+// emojiOk: the box's text gives way to a new one (send's replace), and its emoji with it.
+const boxHasFiles = (emojiOk = false): Promise<boolean> => run(([b, files, emojiOk]) => [...document.querySelector(b)?.querySelectorAll('img') ?? []]
+  .some(i => !emojiOk || !(/\/emoticons\//.test(i.src) || /Emoji/i.test(i.getAttribute('itemtype') || ''))) || !!document.querySelector(files), [BOX, ATTACHED, emojiOk]);
 // ponytail: Teams' bundle names its file cards "file-chiclet" and "attachments-…"; not yet seen with a file attached live
 const ATTACHED = '[data-tid="chat-pane-compose-message-footer"] :is([data-tid*="chiclet" i], [data-tid*="attachment" i])';
 
@@ -782,7 +784,7 @@ export async function send(c: ChatRef, text: string, { replace, quote }: { repla
   await openChat(c);
   await click(BOX);
   const had = plain(await boxText());
-  if (had !== plain(replace ?? '') || (!replace && await boxQuote()) || await boxHasFiles()) // a picture or a file would go along
+  if (had !== plain(replace ?? '') || (!replace && await boxQuote()) || await boxHasFiles(!!replace)) // a picture or a file would go along
     throw Object.assign(fail(409, replace ? 'the text in the compose box has changed, not sent' : 'the compose box has your unsent text, not sent'), { boxTaken: !replace });
   if (replace) await clearBox();
   if (quote) {
