@@ -8,6 +8,7 @@ import { log, errorText, settings, state, saveState, serial, type Summary } from
 import { aiSkipped, skippedAuthor, authorOf, forAi, notToAi, hhmm, quiet } from './filters';
 import { askAi, modelFor, aiReady, line, when, type Request } from './aiuse';
 import { toast } from './toast';
+import { jiraBrief } from './jira';
 import { showTeams, teamsWin, status, inChat, working, marksOf, openPanel, panelTab, windowInUse } from './main';
 
 // The panel's summary tab, with the chat picked; the user chooses the period and starts it. With a result: shows a summary
@@ -76,7 +77,8 @@ async function summaryRequest(chatId: string, title: string, { n = 500, signal, 
   if (read.length && !msgs.length) throw new Error(t('sum.allSkipped')); // not "no messages": there were
   if (!msgs.length) return undefined;
   const found = { count: msgs.length, from: when(msgs[0].id), parts: [{ id: chatId, title, msgs }] };
-  const prompt = `Chat: ${title}\nMessages: ${msgs.length}, from ${when(msgs[0].id)} to ${when(msgs.at(-1)!.id)}\n<<<\n${msgs.map(line).join('\n')}\n>>>`;
+  const prompt = `Chat: ${title}\nMessages: ${msgs.length}, from ${when(msgs[0].id)} to ${when(msgs.at(-1)!.id)}\n<<<\n${msgs.map(line).join('\n')}\n>>>`
+    + (plain ? '' : await jiraBrief(msgs.map(m => m.text)));
   if (question) return { ...found, ...asked(question, prompt, history) };
   const sections = ['sum.main', 'sum.decided', 'sum.onMe', 'sum.open'].map(k => `"${t(k)}"`).join(', ');
   return { ...found, prompt,
@@ -111,7 +113,8 @@ async function chatsRequest(list: Picked[], { n = 150, signal, keepUnread, plain
   });
   if (signal?.aborted) throw new Error(t('err.stopped'));
   if (!parts.length) return undefined;
-  const prompt = parts.map(p => (p.msgs.length ? `## ${p.title}\n${p.msgs.map(line).join('\n')}` : `## ${p.title} (unread; only its last message)\n${p.preview}`)).join('\n\n');
+  const prompt = parts.map(p => (p.msgs.length ? `## ${p.title}\n${p.msgs.map(line).join('\n')}` : `## ${p.title} (unread; only its last message)\n${p.preview}`)).join('\n\n')
+    + (plain ? '' : await jiraBrief(parts.flatMap(p => (p.msgs.length ? p.msgs.map(m => m.text) : [p.preview ?? '']))));
   if (question) return { count: parts.length, from: '', parts, ...asked(question, prompt, history) };
   return { count: parts.length, from: '', parts, prompt,
     system: 'You summarize several of the user\'s work chats; "Me" in the transcripts is the user. '

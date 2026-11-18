@@ -15,7 +15,7 @@ import * as i18n from './i18n';
 import { data, file, ui, ownPage, log, writeJson, errorText, handle, logged, OPTIONS, firstRun, state, saveState, waiting, pending, serial, settings, type Settings, type Draft, type Msg } from './base';
 import { aiSkipped, skippedAuthor, notToAi, forAi, hhmm, quiet, setDnd, keywordHit, called, groupWide, wanted, authorOf, named, listed, skipDraft } from './filters';
 import { signInAsked, onSignIn, signIn } from './signin';
-import { jiraLinks } from './jira';
+import { jiraLinks, jiraBrief } from './jira';
 import { startApi } from './api';
 import { toast, toastWin, toastDraft, carded, toastQueue, keepCard, recent, intoCard } from './toast';
 import { ring, onRing, callWin, callPage, onCall, pickShare } from './calls';
@@ -1038,7 +1038,7 @@ handle('draft:ask', logged('card question', async (_e, n: string, question: unkn
   if (settings.aiOff) throw new Error(t('toast.aiOff'));
   notToAi(d.title);
   const msgs = await wholeMsgs(String(n)).catch(() => d.msgs ?? []);
-  const text = await working(t('summary.asking', { title: d.title }), () => askAi(asked(q, cardChat(d, msgs)), 'summaryModel', AbortSignal.timeout(60_000)));
+  const text = await working(t('summary.asking', { title: d.title }), async () => askAi(asked(q, cardChat(d, msgs) + await jiraBrief(msgs.map(m => m.text))), 'summaryModel', AbortSignal.timeout(60_000)));
   return { text: text.trim(), msgs };
 }));
 // "Carry on in Summary": the card's question and answer go on in the summary tab, by question
