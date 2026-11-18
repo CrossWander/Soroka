@@ -1102,7 +1102,8 @@ async function toAgent(src: AgentSource): Promise<string> {
   state.lastDir = dir;
   saveState();
   log(`agent ${agent.id}: ${lines.length} messages, ${pictures.length} pictures, found ${markNames(marks).join('/') || 'nothing'}`);
-  return agent.name;
+  // Claude Code stays off in a folder VS Code does not trust (Restricted Mode): the request then goes nowhere, unseen
+  return agent.id === 'claude-vscode' ? `${agent.name}. ${t('agent.trust')}` : agent.name;
 }
 // From a card: by question, or the period picked under ▾
 handle('draft:agent', logged('agent', (_e, n: string, period: unknown) => {
