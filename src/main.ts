@@ -16,6 +16,7 @@ import * as agents from './agents';
 import { t } from './i18n';
 import * as i18n from './i18n';
 import { data, file, ui, ownPage, log, writeJson, errorText, handle, OPTIONS, firstRun, state, saveState, waiting, pending, TOKEN, serial, settings, type Settings, type Draft, type Msg, type Summary } from './base';
+import { aiSkipped, skippedAuthor, notToAi, forAi, hhmm, quiet, setDnd, keywordHit, called, groupWide, wanted, authorOf, named, listed, skipDraft } from './filters';
 
 // ---------- settings & state ----------
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
@@ -54,32 +55,8 @@ const modelFor = (key: 'draftModel' | 'summaryModel', auto = false) => {
   const ok = usable().filter(m => !auto || sealed(m)), choice = ok.includes(settings[key]) ? settings[key] : ok.find(m => !auto || standIn(m)) ?? '';
   return free(choice) ? choice : ok.find(m => free(m) && (standIn(m) || ai.providerOf(m) === ai.providerOf(choice))) ?? choice;
 };
-const list = (s: string) => s.split(/[,;\n]/).map(x => x.trim().toLowerCase()).filter(Boolean);
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// A name from a list as a whole word in the text: "Анна" is not in "Ганна", "pos" is in "POS team".
-const hasName = (text: string, names: string) => list(names).some(n => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(n)}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
 // Quick replies: a click puts one into the reply field, the user sends it. None set: the built-in ones of the app's language.
 const quickReplies = () => (settings.quickReplies.trim() || t('quick.default')).split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5);
-// "Not to AI": the chats and people whose messages never go to the AI — no drafts, summaries, style or Claude sessions.
-// A chat by its title; a person also by the messages they write in other chats, which leave the transcript (forAi).
-// Matched by any part, unlike the notification filters: better a chat too many kept from the AI than one too few.
-const aiSkipped = (title: string) => list(settings.aiSkip).some(name => title.toLowerCase().includes(name));
-// An author as Teams shows them: a group's preview often has the first name only, so one word of a listed name counts.
-const skippedAuthor = (who: string) => !!who.trim() && (aiSkipped(who) || list(settings.aiSkip).some(name => name.split(/\s+/).includes(who.trim().toLowerCase())));
-const notToAi = (title: string) => { if (aiSkipped(title)) throw Object.assign(new Error(t('err.aiSkip', { title })), { status: 403 }); };
-// their quote in someone else's reply goes too
-const forAi = (msgs: teams.Message[]) => msgs.filter(m => m.mine || !skippedAuthor(m.author))
-  .map(m => (m.replyTo && skippedAuthor(m.replyTo) ? { ...m, replyTo: undefined, quote: undefined } : m));
-const hhmm = () => new Date().toTimeString().slice(0, 5);
-// Quiet hours may cross midnight (22:00–08:00); "Do not disturb" in Teams counts too when the setting says so.
-let teamsDnd = false; // read from the page on every look at the chat list
-function quiet() {
-  if (settings.quietDnd && teamsDnd) return true;
-  const { quietFrom: a, quietTo: b } = settings;
-  if (!a || !b || a === b) return false;
-  const now = hhmm();
-  return a < b ? now >= a && now < b : now >= a || now < b;
-}
 
 function updateSettings(input: Record<string, unknown>) {
   const next: Record<string, unknown> = { ...settings };
@@ -1268,20 +1245,7 @@ async function learnStyle() {
 
 // ---------- watching for personal messages and @mentions ----------
 const withLabel = (t: string) => (settings.label && !t.startsWith('🤖') ? `🤖 ${t}` : t);
-const keywordHit = (c: teams.Chat) => list(settings.keywords).some(k => `${c.title} ${c.preview}`.toLowerCase().includes(k));
-// a message for the user (personal, an @mention, a keyword hit); "Every message in group chats" brings a group's others too
-const called = (c: teams.Chat) => c.type === 'direct' || c.mention || keywordHit(c);
-const groupWide = (c: teams.Chat) => settings.groups && c.type === 'group';
-const wanted = (c: teams.Chat) => c.unread && (called(c) || groupWide(c));
-// "Never from" (bots, recordings, noisy chats) wins over everything; "Only from": personal messages and @mentions from the
-// listed people only; keyword hits always count. A name counts in the chat's title and as the author of its last message
-// ("Author: text" in a group's preview), as a whole word: a name in a message's text, or a part of another name, does not.
-const authorOf = (c: Pick<teams.Chat, 'type' | 'preview'>) => (c.type === 'direct' ? '' : /^([^:\n]{1,80}): /.exec(c.preview)?.[1] ?? '');
-const named = (c: teams.Chat, names: string) => hasName(c.title, names) || hasName(authorOf(c), names);
-const listed = (c: teams.Chat) => !named(c, settings.muteFrom) && (!list(settings.onlyFrom).length || keywordHit(c) || named(c, settings.onlyFrom));
 
-// a card the AI does not get: its chat, or the author of the message it answers, is on the "Not to AI" list
-const skipDraft = (d: Pick<Draft, 'title' | 'last'>) => aiSkipped(d.title) || skippedAuthor(authorOf({ type: 'group', preview: d.last }));
 function addDraft(d: Omit<Draft, 'status' | 'at'>) {
   const n = String(state.nextDraft++);
   state.drafts[n] = { ...d, status: 'pending', at: Date.now() };
@@ -1711,8 +1675,7 @@ async function tick() {
   try {
     if (!(await teams.ready(10_000)) && !(await calling())) { log('session lost, reconnecting'); await serial(() => connect(false)); return; } // a moment of redrawing is no lost session
     if (!windowInUse() && Date.now() - loadedAt > 3 * 3600_000 && !(await calling())) { await serial(() => connect(false)); return; } // fresh page every 3 h
-    // ponytail: "Do not disturb" (and presenting) by the words of a ru/uk/en Teams; another UI language never reads as busy
-    teamsDnd = /не беспокоить|не турбувати|do not disturb|презент|presenting/i.test(await teams.myStatus().catch(() => ''));
+    setDnd(await teams.myStatus().catch(() => ''));
     remind();
     if (mode() === 'drafts' && teamsWin.isFocused()) return; // drafts mode opens chats: not under the user's hands
     const found = await inChat(undefined, async before => {
