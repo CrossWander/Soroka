@@ -1,9 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, net, safeStorage, screen, session, shell } from 'electron';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { app, BaseWindow, BrowserWindow, Menu, Tray, WebContentsView, clipboard, desktopCapturer, dialog, nativeImage, nativeTheme, net, screen, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -15,8 +13,12 @@ import { agentPrompt, byQuestion, cleanHandoffs, findMarks, markNames, renderCha
 import * as agents from './agents';
 import { t } from './i18n';
 import * as i18n from './i18n';
-import { data, file, ui, ownPage, log, writeJson, errorText, handle, OPTIONS, firstRun, state, saveState, waiting, pending, TOKEN, serial, settings, type Settings, type Draft, type Msg, type Summary } from './base';
+import { data, file, ui, ownPage, log, writeJson, errorText, handle, OPTIONS, firstRun, state, saveState, waiting, pending, serial, settings, type Settings, type Draft, type Msg, type Summary } from './base';
 import { aiSkipped, skippedAuthor, notToAi, forAi, hhmm, quiet, setDnd, keywordHit, called, groupWide, wanted, authorOf, named, listed, skipDraft } from './filters';
+import { signInAsked, signInCard, onSignIn, signIn } from './signin';
+import { jiraLinks } from './jira';
+import { startApi } from './api';
+import './update';
 
 // ---------- settings & state ----------
 // Until "Refresh" asks Claude Code: the models a plan includes as of 2026-11 (Fable 5.1 needs paid usage credits).
@@ -117,14 +119,14 @@ const applyAutostart = () => app.setLoginItemSettings({
 
 // ---------- windows & tray ----------
 let teamsWin: BrowserWindow; // its own page is the strip; Teams is the view below it
-let teamsPage: Electron.WebContents;
+export let teamsPage: Electron.WebContents;
 // the panel on the right of the Teams page: its tabs' pages (ui/drafts.html, ui/summary.html), one on screen at a time
 type Tab = 'drafts' | 'summary';
 const panelPages: Partial<Record<Tab, WebContentsView>> = {};
 let panelTab: Tab | null = null; // null: the panel is closed
-let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
+export let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
 let tray: Tray;
-let status: 'starting' | 'login' | 'ready' = 'starting';
+export let status: 'starting' | 'login' | 'ready' = 'starting';
 let quitting = false;
 const preload = path.join(__dirname, 'preload.js');
 
@@ -134,12 +136,11 @@ function image(size: number, opts?: Parameters<typeof icon.draw>[1]) {
   for (const scale of [1.5, 2]) img.addRepresentation({ scaleFactor: scale, buffer: icon.png(Math.round(size * scale), opts) });
   return img;
 }
-const APP_ICON = image(64);
+export const APP_ICON = image(64);
 const APP_ICON_URL = `data:image/png;base64,${icon.png(72).toString('base64')}`;
 
 let lastTray = '';
-let signInAsked = false; // Teams' banner "sign in again" is up (onSignIn)
-function refreshTray() {
+export function refreshTray() {
   if (!tray) return;
   const count = pending().length;
   const head = signInAsked ? t('signin.title') : t(`teams.${status}`);
@@ -246,10 +247,10 @@ type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 
   stack?: { key: string; msgs: Msg[] } };
 // The cards (a message, the sign-in, a call): transparent, the page draws the card with its shadow and asks for its height.
 const CARD = 392;
-const cardWindow = (o: Electron.BrowserWindowConstructorOptions = {}) => new BrowserWindow({ width: CARD, height: 200, show: false, frame: false,
+export const cardWindow = (o: Electron.BrowserWindowConstructorOptions = {}) => new BrowserWindow({ width: CARD, height: 200, show: false, frame: false,
   transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: 'Soroka', webPreferences: { preload }, ...o });
 // On the primary screen: bottom right, `above` px higher, or top right.
-function corner(win: BrowserWindow, height: number, above: number | 'top' = 0) {
+export function corner(win: BrowserWindow, height: number, above: number | 'top' = 0) {
   const { workArea: wa } = screen.getPrimaryDisplay(), h = Math.ceil(height);
   win.setBounds({ width: CARD, height: h, x: wa.x + wa.width - CARD, y: above === 'top' ? wa.y : wa.y + wa.height - h - above });
 }
@@ -270,7 +271,7 @@ function nextToast() {
   if (next) toast(next, true);
 }
 const recent: { at: number; title: string; click?: () => void }[] = []; // the last 10 toasts, for the tray menu
-function toast(item: Toast, fromQueue = false) {
+export function toast(item: Toast, fromQueue = false) {
   if (quitting) return; // a card now would open a new window, the quit would wait for it: closing the old card showed the next queued one
   if (!fromQueue) { // a queued one was recorded when it came
     recent.unshift({ at: Date.now(), title: item.title, click: item.click });
@@ -323,7 +324,7 @@ handle('draft:keep', (_e, n: string, text: unknown) => {
 });
 // A Claude session sends only what the user confirms in the app too: a card with the chat and the text, and the request
 // waits for the click. No answer in 3 minutes, or the card closed: not sent.
-function confirmSend(title: string, text: string) {
+export function confirmSend(title: string, text: string) {
   return new Promise<boolean>(ok => {
     let done = false;
     const answer = (yes: boolean) => { if (!done) { done = true; clearTimeout(timer); ok(yes); } };
@@ -434,92 +435,6 @@ const watch = () => Promise.all([
   jiraLinks(),
 ]).catch(e => log('watch:', errorText(e)));
 
-// ---------- Teams asking to sign in again ----------
-// Microsoft ended the sign-in (a password change, or IT asked) and Teams shows a banner whose "Sign in" does nothing here
-// (teams.watchSignIn). The app says so even with its window hidden: a card above the clock that follows the sign-in
-// through (ui/signin.html: asked → Microsoft's window open → signed in), "!" on the tray icon and "Sign in to Teams again"
-// first in its menu while it lasts. "Remind me in an hour" or ✕ put the card away for an hour; the "!" and the item stay.
-// signIn(): Microsoft's account page opens in Teams' session, hidden, and comes up when Microsoft asks for the sign-in.
-// Back on the account page and staying there (the page itself goes to the sign-in first, when one is due) the user is
-// signed in: the window hides at once, closes after the check and the chats reload, so Teams signs in quietly again. A call's page is left as it is:
-// reloading it would drop the call.
-let signInWin: BrowserWindow | null = null, signInCard: BrowserWindow | null = null;
-let signInState: '' | 'ask' | 'wait' | 'done' = '', signInLater = 0, signInCardTimer: NodeJS.Timeout | undefined;
-function onSignIn(what: 'shown' | 'gone' | 'click') {
-  if (what === 'click') return signIn();
-  const asked = what === 'shown';
-  if (asked === signInAsked) return;
-  signInAsked = asked;
-  log(`sign-in: Teams ${asked ? 'asks to sign in again' : 'is signed in'}`);
-  refreshTray();
-  if (asked) { if (Date.now() >= signInLater && !signInWin) showSignInCard('ask'); }
-  else if (signInState === 'wait') showSignInCard('done'); // Teams got in by itself meanwhile
-  else if (signInState === 'ask') signInCard?.close();
-}
-function showSignInCard(state: 'ask' | 'wait' | 'done') {
-  signInState = state;
-  clearTimeout(signInCardTimer);
-  if (state === 'done') signInCardTimer = setTimeout(() => signInCard?.close(), 4000);
-  if (signInCard) return signInCard.webContents.send('signin', state);
-  const win = signInCard = cardWindow();
-  win.loadFile(ui('signin.html'));
-  win.webContents.on('did-finish-load', () => win.webContents.send('signin', signInState)); // also after a reload (a language change)
-  win.on('closed', () => { if (signInCard === win) { signInCard = null; signInState = ''; } });
-}
-handle('signin:size', (e, height: number) => { // above the clock, under the message cards (toast:size leaves it room)
-  if (!signInCard || e.sender !== signInCard.webContents) return;
-  corner(signInCard, height);
-  signInCard.setAlwaysOnTop(true, 'pop-up-menu');
-  if (!signInCard.isVisible()) signInCard.showInactive();
-});
-handle('signin:act', (e, name: string) => {
-  if (!signInCard || e.sender !== signInCard.webContents) return;
-  if (name === 'go' || name === 'show') return signIn();
-  if (name !== 'later') return;
-  signInLater = Date.now() + 60 * 60_000;
-  signInCard.close();
-  setTimeout(() => { if (signInAsked && !signInCard && !signInWin && Date.now() >= signInLater) showSignInCard('ask'); }, 60 * 60_000);
-});
-// check: the user closed the window after Microsoft asked, maybe signed in by then: the same page, hidden, tells which.
-function signIn(check = false) {
-  if (signInWin) { signInWin.show(); return signInWin.focus(); }
-  log(check ? 'sign-in: window closed, checking' : 'sign-in: opening Microsoft');
-  if (signInAsked || signInCard) showSignInCard('wait');
-  const win = signInWin = new BrowserWindow({ ...PLAIN, width: 520, height: 680, show: false, webPreferences: { session: session.fromPartition('persist:teams') } });
-  const ACCOUNT = /^https:\/\/myaccount\.microsoft\.com\//;
-  let asked = false, settled = false, done: NodeJS.Timeout | undefined;
-  win.webContents.on('did-navigate', (_e, url) => {
-    clearTimeout(done);
-    log('sign-in: at', new URL(url).host); // where a sign-in stops, next time one does
-    if (!ACCOUNT.test(url)) { // Microsoft's sign-in, or the organization's own
-      if (check) return win.close(); // still not signed in
-      asked = true;
-      if (!win.isVisible()) win.show(); // also when Microsoft asks once more after the account page
-      return;
-    }
-    if (asked) win.hide(); // signed in: its check goes on unseen, no window hanging there for the user to close half-way
-    const settle = () => {
-      if (win.webContents.isLoadingMainFrame()) { done = setTimeout(settle, 2000); return; } // the page's own frames load on and on
-      log(`sign-in: ${asked ? 'signed in again' : 'Microsoft did not ask'}`);
-      settled = true;
-      win.close();
-      if (!asked && !signInAsked) return;
-      teamsPage.reload(); // the banner up and Microsoft not asking: Teams' page gets in once it starts afresh
-      if (signInCard) showSignInCard('done');
-    };
-    done = setTimeout(settle, 8000);
-  });
-  win.on('closed', () => {
-    clearTimeout(done);
-    if (signInWin === win) signInWin = null;
-    if (settled || signInState !== 'wait') return;
-    if (asked) signIn(true);
-    else showSignInCard('ask'); // closed before signing in: back to asking
-  });
-  win.loadURL('https://myaccount.microsoft.com/').catch(e => { // ERR_ABORTED: the page went on to the sign-in
-    if ((e as { code?: string }).code !== 'ERR_ABORTED') { log('sign-in:', errorText(e)); win.close(); }
-  });
-}
 // The picture of "nothing open" (teams.pickHint): the app's magpie on its purple disc between two chat bubbles in Teams' colours.
 let pickSvg = '';
 const pickPicture = () => pickSvg ||= 'data:image/svg+xml;base64,' + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="260" height="170">
@@ -599,7 +514,7 @@ async function restoreChat(before?: string) {
 }
 // Work in a chat the app opens itself (sending, a reaction, reading; undefined: in several): the user's own chat comes back
 // after it, or a hidden window parks on the self-chat, so later messages in that chat are not read unseen.
-const inChat = <T>(chatId: string | undefined, fn: (before?: string) => Promise<T>) => serial(async () => {
+export const inChat = <T>(chatId: string | undefined, fn: (before?: string) => Promise<T>) => serial(async () => {
   const before = windowInUse() ? await teams.currentChatId() : undefined;
   try { return await fn(before); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
 });
@@ -747,11 +662,11 @@ function closePanel() {
   layout();
   pushStrip();
 }
-const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
+export const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
 handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
 handle('panel:close', () => closePanel());
 // The answers. From the tray or a toast (show) the window comes up too.
-function showDrafts(show = false) {
+export function showDrafts(show = false) {
   if (show) showTeams();
   openPanel('drafts').send('drafts');
 }
@@ -1096,7 +1011,7 @@ async function windowRequest(chatId: string, title: string, period: string, { ch
   if (chatId === '+') return chatsRequest(chats.slice(0, 10).map((c): Picked => real(c.id) ?? c), { ...range(period), signal, plain, session }, question, history);
   return summaryRequest(chatId, real(chatId)?.title ?? title, { ...range(period), signal, plain, session }, question, history);
 }
-const windowAnswer = (chatId: string, title: string, period: string, ask: Ask, signal?: AbortSignal): Promise<Summary> =>
+export const windowAnswer = (chatId: string, title: string, period: string, ask: Ask, signal?: AbortSignal): Promise<Summary> =>
   working(ask.plain ? t('summary.reading', { title }) : chatId === '*' ? t('busy.digest') : t('busy.summary', { title }), async () => {
     if (settings.aiOff && !ask.plain) throw Object.assign(new Error(t('toast.aiOff')), { status: 403 }); // before reading: reading marks chats read
     const req = await windowRequest(chatId, title, period, ask, signal);
@@ -1136,64 +1051,6 @@ setInterval(() => {
   });
 }, 30_000);
 
-// ---------- updates: a newer release on GitHub comes as a card; "Install" downloads its installer and runs it ----------
-// A minute after the start, then once a day; installed copies only. Nothing about the user goes along: a plain GET.
-// ponytail: tells and installs on a click; electron-updater (downloads in the background, installs on quit) when wanted
-const RELEASES = 'https://github.com/CrossWander/Soroka/releases';
-const newer = (a: string, b: string) => {
-  const x = a.split('.').map(Number), y = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
-  return false;
-};
-// An installer runs only with its release's signature (scripts/sign-release.mjs in the release job, the key a secret of the
-// GitHub environment "release", which only tag runs get): a file swapped in a release, or put there by anything but that
-// job, is not run. The signature covers the file name, so one release's installer cannot pass for another version.
-const UPDATE_KEY = crypto.createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwdwj95MyhSQA3ZEf3yPmIumHKpnTfPGIxQQShJK/ub0=\n-----END PUBLIC KEY-----\n');
-const signedInstaller = (name: string, exe: Buffer, sig: string) =>
-  crypto.verify(null, Buffer.from(`${name} ${crypto.createHash('sha256').update(exe).digest('hex')}`), UPDATE_KEY, Buffer.from(sig.trim(), 'base64'));
-let updateShown = ''; // told once a run
-async function checkUpdate() {
-  if (!app.isPackaged) return; // a dev run is no installed version
-  try {
-    // the releases' feed, not GitHub's API: an office's computers share one address, whose 60 API calls an hour run out (403)
-    const opts = { headers: { 'user-agent': `Soroka/${app.getVersion()}` }, credentials: 'omit' as const };
-    const r = await net.fetch(`${RELEASES}.atom`, opts);
-    if (!r.ok) return log(`update check: ${r.status}`);
-    const version = /\/releases\/tag\/v(\d+\.\d+\.\d+)"/.exec(await r.text())?.[1]; // the newest release comes first
-    if (!version || version === updateShown || !newer(version, app.getVersion())) return;
-    // the installer of that very release, from this repository only
-    const url = `${RELEASES}/download/v${version}/Soroka-Setup-${version}.exe`, there = async (u: string) => (await net.fetch(u, { ...opts, method: 'HEAD' })).ok;
-    if (!(await there(url))) return log(`update: ${version} has no installer yet`);
-    if (!(await there(`${url}.sig`))) return log(`update: ${version} is not signed yet`); // asked again tomorrow
-    updateShown = version;
-    log(`update: ${version} is out`);
-    toast({ title: t('update.title', { v: version }), message: t('update.text', { cur: app.getVersion() }), tone: 'accent', long: true,
-      click: () => void shell.openExternal(`${RELEASES}/tag/v${version}`), // missed, it is still in the tray's recent ones
-      actions: [{ label: t('act.install'), run: () => void installUpdate(url, version) },
-        { label: t('act.whatsNew'), run: () => void shell.openExternal(`${RELEASES}/tag/v${version}`) }] });
-  } catch (e) { log('update check:', errorText(e)); }
-}
-// The installer runs as on a first install, with its progress on screen; the app quits for it, and it starts the new one.
-async function installUpdate(url: string, version: string) {
-  toast({ title: t('update.loading', { v: version }), message: t('update.loadingText') });
-  try {
-    const [r, s] = await Promise.all([url, `${url}.sig`].map(u => net.fetch(u, { credentials: 'omit' }))); // GitHub sends them from its file storage
-    if (!r.ok || !s.ok) throw new Error(`HTTP ${r.ok ? s.status : r.status}`);
-    const name = `Soroka-Setup-${version}.exe`, exe = Buffer.from(await r.arrayBuffer());
-    if (!signedInstaller(name, exe, await s.text())) throw new Error(t('update.badSig'));
-    const file = path.join(app.getPath('temp'), name);
-    fs.writeFileSync(file, exe);
-    log(`update: running the installer of ${version}`);
-    spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
-    app.quit();
-  } catch (e) {
-    log('update:', errorText(e));
-    toast({ title: t('update.failed'), message: errorText(e), tone: 'error', long: true,
-      actions: [{ label: t('act.whatsNew'), run: () => void shell.openExternal(`${RELEASES}/tag/v${version}`) }] });
-  }
-}
-setTimeout(() => void checkUpdate(), 60_000);
-setInterval(() => void checkUpdate(), 86_400_000);
 // The files handed over to an agent go once their time is up: at start and every hour.
 const cleanHandoff = () => cleanHandoffs((Number(settings.handoffKeep) || 24) * 3_600_000); // a broken value: a day, not "never"
 cleanHandoff();
@@ -1244,9 +1101,9 @@ async function learnStyle() {
 }
 
 // ---------- watching for personal messages and @mentions ----------
-const withLabel = (t: string) => (settings.label && !t.startsWith('🤖') ? `🤖 ${t}` : t);
+export const withLabel = (t: string) => (settings.label && !t.startsWith('🤖') ? `🤖 ${t}` : t);
 
-function addDraft(d: Omit<Draft, 'status' | 'at'>) {
+export function addDraft(d: Omit<Draft, 'status' | 'at'>) {
   const n = String(state.nextDraft++);
   state.drafts[n] = { ...d, status: 'pending', at: Date.now() };
   draftsChanged();
@@ -1959,205 +1816,8 @@ handle('draft:handoff', logged('reply handoff', async (_e: unknown, n: string) =
 }));
 handle('models:get', () => models());
 handle('models:check', logged('models', async () => { await refreshAi(); return checkModels(); }));
-// Issue keys found in messages open in Jira; nothing else is opened from here.
-// A web page in a window of the app, with Teams' session: Microsoft 365 opens signed in, and so does Jira once signed in there.
-function webWindow(url: string) {
-  const win = new BrowserWindow({ width: 1200, height: 820, icon: APP_ICON, autoHideMenuBar: true, webPreferences: { partition: 'persist:teams' } });
-  void win.loadURL(url);
-  return win;
-}
-const jiraBase = () => settings.jiraUrl.replace(/\/+$/, '');
-handle('open:jira', (_e, key: string) => openJira(String(key)));
-function openJira(key: string) { // where the links of Teams open: here or in the browser
-  if (!settings.jiraUrl || !teams.JIRA_KEY.test(key)) return;
-  const url = `${jiraBase()}/browse/${key}`;
-  if (settings.links === 'browser') void shell.openExternal(url); else webWindow(url);
-}
-// A ticket's name and status beside its key in the cards, read as the user: signed in to Jira once in a window of the app,
-// its cookies stay in the app's session as in a browser. { login: true } while not signed in; null when Jira does not say.
-const jiraSeen = new Map<string, { at: number; issue: { summary: string; status: string } }>(); // 5 minutes
-handle('jira:issue', (_e, key: string) => jiraIssue(String(key)));
-async function jiraIssue(key: string) {
-  if (!settings.jiraUrl || !teams.JIRA_KEY.test(key)) return null;
-  const hit = jiraSeen.get(key);
-  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.issue;
-  const r = await jiraGet(`/rest/api/2/issue/${key}?fields=summary,status`);
-  if (r?.status === 401) return { login: true };
-  if (!r?.ok) return null; // no such ticket, no access to it, or Jira away
-  const j = await r.json().catch(() => undefined);
-  const issue = { summary: String(j?.fields?.summary ?? ''), status: String(j?.fields?.status?.name ?? '') };
-  jiraSeen.set(key, { at: Date.now(), issue });
-  return issue;
-}
-// The same after the Jira links and keys in Teams' chats; a click on a key opens it as a link would. Not signed in: a hint
-// after the links, asked again in a minute (a click on the link opens Jira in a window of the app, where the user signs in).
-// ponytail: re-asked on the page's next change, not on the sign-in itself
-const jiraLinks = () => teams.watchJira(jiraBase(), keys => {
-  for (const key of keys) void jiraIssue(key).then(i => i && 'login' in i ? teams.jiraText(key, t('jira.login'), 60_000, false)
-    : teams.jiraText(key, i ? [i.status, i.summary].filter(Boolean).join(' · ') : '', 5 * 60_000, !!i)).catch(e => log('jira links:', errorText(e)));
-}, key => openJira(key));
-// A GET to Jira as the user: with the saved token, when it was saved for this address and Jira still takes it; else with
-// the cookies of a sign-in in a window of the app. The token never follows a redirect: one fails the request.
-async function jiraGet(apiPath: string) {
-  const base = jiraBase(), token = jiraToken(base);
-  if (token) {
-    const r = await net.fetch(`${base}${apiPath}`, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error' })
-      .catch(() => undefined);
-    jiraTokenBad = r?.status === 401;
-    if (r && !jiraTokenBad) return r;
-  }
-  return session.fromPartition('persist:teams').fetch(`${base}${apiPath}`, { headers: { Accept: 'application/json' }, credentials: 'include' }) // the session's cookies
-    .catch(() => undefined);
-}
-// The Jira personal access token: encrypted by Windows for the user's account on this computer (safeStorage: DPAPI), in a file
-// of its own; never in the settings, never in plain text, never shown again. Bound to the Jira address it was saved for and
-// sent only there. It leaves this process only in requests to that address: the settings page learns whether it works, and whose it is.
-const JIRA_TOKEN = file('jira-token.bin');
-let jiraTokenBad = false; // Jira turned the saved token down (expired, revoked): the cookies are tried instead
-function jiraSaved(): { base: string; token: string; user: string } | undefined {
-  try { return JSON.parse(safeStorage.decryptString(fs.readFileSync(JIRA_TOKEN))); } catch { return undefined; }
-}
-const jiraToken = (base: string) => { const s = jiraSaved(); return s?.base === base ? s.token : undefined; };
-handle('jira:token', () => {
-  const s = jiraSaved();
-  return s ? { user: s.user, other: s.base !== jiraBase(), bad: jiraTokenBad } : null;
-});
-// Saves a token Jira takes for the address in the settings ('' removes it). Only from the settings page.
-handle('jira:tokenSet', async (e, value: unknown) => {
-  if (e.sender !== settingsView?.webContents) return;
-  if (value === '') fs.rmSync(JIRA_TOKEN, { force: true });
-  else {
-    const base = jiraBase(), token = String(value).trim();
-    if (!base) throw new Error(t('set.jiraTokenNoUrl'));
-    if (!/^[\x21-\x7e]{10,500}$/.test(token)) throw new Error(t('set.jiraTokenBad')); // printable, no spaces: nothing to break a header
-    if (!safeStorage.isEncryptionAvailable()) throw new Error(t('set.jiraTokenNoCrypt')); // never kept in plain text instead
-    const r = await net.fetch(`${base}/rest/api/2/myself`, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error' })
-      .catch(() => undefined);
-    if (r?.status === 401 || r?.status === 403) throw new Error(t('set.jiraTokenBad'));
-    if (!r?.ok) throw new Error(t('set.jiraTokenAway', { status: String(r?.status ?? '—') }));
-    const me = await r.json().catch(() => ({}));
-    fs.writeFileSync(JIRA_TOKEN, safeStorage.encryptString(JSON.stringify({ base, token, user: String(me.displayName || me.name || '') })), { mode: 0o600 });
-  }
-  log(value === '' ? 'jira token: removed' : 'jira token: saved'); // never the token itself
-  jiraTokenBad = false;
-  jiraSeen.clear();
-  if (status === 'ready') void jiraLinks().catch(err => log('jira links:', errorText(err))); // the chat's links ask again
-});
-handle('jira:login', () => { // always here, whatever the links setting: the cards read Jira with the app's session
-  if (settings.jiraUrl) webWindow(`${jiraBase()}/login.jsp`).on('closed', () => toPanel('drafts')); // the cards ask Jira again
-});
 handle('summary:stop', e => summaryRuns.get(e.sender.id)?.abort());
 handle('summary:last', (_e, chatId: string) => state.summaries[String(chatId)]);
-
-// ---------- local API for Claude sessions (tb.mjs); requests and answers signed with token.txt ----------
-// The token itself never travels: a program that took the port first (another user of this computer) would get it.
-// tb.mjs signs each request (method, path, time, a one-time nonce) with HMAC-SHA256 under the token; Soroka signs its
-// answer to that nonce, so tb.mjs shows nothing a stand-in on the port made up.
-const sign = (...parts: string[]) => crypto.createHmac('sha256', TOKEN).update(parts.join('\n')).digest('hex');
-const answering = new WeakMap<http.ServerResponse, string>(); // the request's nonce, which the answer is signed to
-const json = (res: http.ServerResponse, code: number, body: unknown) => {
-  const text = JSON.stringify(body), nonce = answering.get(res);
-  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8',
-    ...(nonce ? { 'x-sig': sign(nonce, String(code), crypto.createHash('sha256').update(text).digest('hex')) } : {}) });
-  res.end(text);
-};
-const body = (req: http.IncomingMessage) => new Promise<any>((ok, no) => {
-  let b = '', big = false; req.setEncoding('utf8'); req.on('error', no);
-  // a message, not a file: past 64 KB the rest is read and dropped, and the answer says why
-  req.on('data', x => { if (big) return; b += x; if (b.length > 64 * 1024) { big = true; b = ''; no(Object.assign(new Error('body too large'), { status: 413 })); } });
-  req.on('end', () => { try { ok(JSON.parse(b || '{}')); } catch { no(Object.assign(new Error('bad json'), { status: 400 })); } });
-});
-const need = (ok: unknown, what: string) => { if (!ok) throw Object.assign(new Error(`${what} required`), { status: 400 }); };
-// The request's nonce when it is signed, fresh (30 s) and not seen before (a request cannot be played again), else ''.
-// The request from this computer's programs only, checked before: no browser page (it sends an Origin) and no other host
-// name pointed at 127.0.0.1 (a site's own DNS name, to reach the API through the user's browser).
-const nonces = new Map<string, number>();
-function signedBy(req: http.IncomingMessage) {
-  const [nonce, ts, sig] = ['x-nonce', 'x-ts', 'x-sig'].map(h => String(req.headers[h] ?? '')), now = Date.now();
-  for (const [n, at] of nonces) if (now - at > 60_000) nonces.delete(n);
-  if (!/^[0-9a-f]{32}$/.test(nonce) || nonces.has(nonce) || !(Math.abs(now - Number(ts)) < 30_000)) return '';
-  const want = sign(req.method ?? '', req.url ?? '', ts, nonce);
-  if (sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return ''; // constant time
-  nonces.set(nonce, now);
-  return nonce;
-}
-
-function startApi() {
-  const PORT = Number(process.env.PORT ?? 8765);
-  http.createServer(async (req, res) => {
-    try {
-      if (req.headers.origin || ![`127.0.0.1:${PORT}`, `localhost:${PORT}`].includes(req.headers.host ?? '')) return json(res, 403, { error: 'local programs only' });
-      const nonce = signedBy(req);
-      if (!nonce) return json(res, 401, { error: 'not signed with token.txt' });
-      answering.set(res, nonce);
-      if (settings.aiOff) return json(res, 403, { error: t('toast.aiOff') }); // "Do not use AI": AI sessions get nothing from Teams either
-      if (status !== 'ready') return json(res, 503, { error: `teams is not ready: ${status}` });
-      const url = new URL(req.url ?? '/', 'http://x');
-      const route = `${req.method} ${url.pathname}`;
-      // a Claude session is AI too: the chats on the "Not to AI" list come without their messages
-      // the chats on the "Not to AI" list, and the messages of the people on it, come without their text
-      const hide = (c: teams.Chat) => (aiSkipped(c.title) || skippedAuthor(authorOf(c)) ? { ...c, preview: '' } : c);
-      const hideDraft = ({ context, ...d }: Draft) => (aiSkipped(d.title) ? { ...d, last: '', preview: '', msgs: [] } : { ...d, last: skipDraft(d) ? '' : d.last,
-        preview: skippedAuthor(authorOf({ type: 'group', preview: d.preview ?? '' })) ? '' : d.preview, msgs: d.msgs?.filter(m => !skippedAuthor(m.who ?? '')) });
-      if (route === 'GET /chats') return json(res, 200, (await serial(teams.chatList)).map(hide));
-      if (route === 'GET /unread') return json(res, 200, (await serial(teams.chatList)).filter(wanted).map(hide));
-      if (route === 'GET /drafts') return json(res, 200, Object.fromEntries(Object.entries(state.drafts).map(([n, d]) => [n, hideDraft(d)])));
-      if (route === 'POST /notify') { // a Claude session tells the user something without opening anything
-        const { title, message } = await body(req);
-        need(title?.trim(), 'title');
-        toast({ title, message: message ?? '', long: true });
-        return json(res, 200, { shown: true });
-      }
-      if (route === 'GET /messages') {
-        const part = url.searchParams.get('chat');
-        need(part, 'chat');
-        const n = Math.min(Number(url.searchParams.get('n') ?? 20), 500);
-        const c = await serial(() => teams.findChat(part!));
-        notToAi(c.title);
-        return json(res, 200, { chat: c.title, messages: forAi(await inChat(c.id, () => teams.history(c, n))) });
-      }
-      if (route === 'GET /summary') { // the same summary the app's window shows
-        const part = url.searchParams.get('chat');
-        need(part, 'chat');
-        const c = await serial(() => teams.findChat(part!));
-        notToAi(c.title); // the plain summary skips this check for the window, but here it goes to an AI session
-        const r = await windowAnswer(c.id, c.title, `n${Number(url.searchParams.get('n') ?? 100)}`, { plain: url.searchParams.has('plain'), session: true }); // plain: no tokens
-        return json(res, 200, { chat: c.title, summary: r.text, count: r.count });
-      }
-      if (route === 'POST /send') { // goes out once the user confirms it in the app's card (confirmSend)
-        const { chat, text } = await body(req);
-        need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
-        const c = await serial(() => teams.findChat(chat));
-        if (!(await confirmSend(c.title, withLabel(text)))) return json(res, 403, { error: 'not sent: the user did not confirm it' });
-        return json(res, 200, await inChat(c.id, () => teams.send(c, withLabel(text))));
-      }
-      if (route === 'POST /draft') { // an answer card the user sends or rejects; nothing leaves without their click
-        const { chat, text, note } = await body(req);
-        need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
-        const c = await serial(() => teams.findChat(chat));
-        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, kind: 'request', preview: c.preview });
-        toast({ title: t('toast.claudeSuggests'), message: `${c.title}: ${text}`, tone: 'accent', long: true, click: () => showDrafts(true) });
-        return json(res, 200, { draft: n });
-      }
-      if (route === 'POST /gif-search') {
-        const { query, n } = await body(req);
-        need(query?.trim(), 'query');
-        return json(res, 200, await serial(() => teams.gifSearch(query.trim(), Math.min(Number(n ?? 6), 20))));
-      }
-      if (route === 'POST /send-gif') {
-        const { chat, query, src, text } = await body(req); // text: sent in the same message, before the GIF
-        need(typeof chat === 'string' && typeof query === 'string' && query.trim(), 'chat and query');
-        const c = await serial(() => teams.findChat(chat)), said = typeof text === 'string' && text.trim() ? withLabel(text) : undefined;
-        if (!(await confirmSend(c.title, `${said ? `${said}\n` : ''}GIF: ${query.trim()}`))) return json(res, 403, { error: 'not sent: the user did not confirm it' });
-        return json(res, 200, await inChat(c.id, () => teams.sendGif(c, query.trim(), typeof src === 'string' ? src : undefined, said)));
-      }
-      json(res, 404, { error: 'not found' });
-    } catch (e) { json(res, (e as { status?: number }).status ?? 500, { error: errorText(e) }); }
-  }).on('error', e => { // the port taken: Claude sessions reach that program instead, and tb.mjs refuses its answers
-    log('api:', e.message);
-    toast({ title: t('toast.apiBusy', { port: PORT }), message: t('toast.apiBusyText'), tone: 'error', long: true });
-  }).listen(PORT, '127.0.0.1', () => log(`api on 127.0.0.1:${PORT}`));
-}
 
 // ---------- start ----------
 app.on('second-instance', showTeams);
@@ -2173,7 +1833,7 @@ app.on('before-quit', () => { quitting = true; flushSession(); setTimeout(() => 
 // Microsoft addresses carry the account: login_hint. A page asks for no frameless, transparent or always-on-top window,
 // which could pass for a card of the app or a sign-in prompt: its window is a plain one, its address in the title.
 const MICROSOFT = /^https:\/\/([\w-]+\.)*(microsoft\.com|microsoft365\.com|office\.com|office365\.com|sharepoint\.com|live\.com|cloud\.microsoft)\//;
-const PLAIN: Electron.BrowserWindowConstructorOptions = { frame: true, transparent: false, alwaysOnTop: false, skipTaskbar: false, fullscreen: false,
+export const PLAIN: Electron.BrowserWindowConstructorOptions = { frame: true, transparent: false, alwaysOnTop: false, skipTaskbar: false, fullscreen: false,
   kiosk: false, titleBarStyle: 'default', icon: APP_ICON, autoHideMenuBar: true };
 function openWindow({ url }: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse {
   if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow', overrideBrowserWindowOptions: PLAIN };
