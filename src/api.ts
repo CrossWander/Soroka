@@ -5,7 +5,8 @@ import * as teams from './teams';
 import { TOKEN, log, errorText, serial, settings, state, type Draft } from './base';
 import { aiSkipped, skippedAuthor, authorOf, skipDraft, wanted, notToAi, forAi } from './filters';
 import { t } from './i18n';
-import { status, inChat, windowAnswer, withLabel, addDraft, showDrafts } from './main';
+import { status, inChat, withLabel, addDraft, showDrafts } from './main';
+import { windowAnswer } from './summary';
 import { toast, confirmSend } from './toast';
 
 // The token itself never travels: a program that took the port first (another user of this computer) would get it.
