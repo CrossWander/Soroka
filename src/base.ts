@@ -40,6 +40,10 @@ export const errorText = (e: unknown) => (e as Error).message;
 // The app's own pages only (ownPage): a web page in one of its windows never reaches these, wherever it navigated.
 export const handle = (channel: string, fn: (e: Electron.IpcMainInvokeEvent, ...a: any[]) => unknown) =>
   ipcMain.handle(channel, (e, ...a) => { if (!ownPage(e.senderFrame?.url)) throw new Error('not allowed'); return fn(e, ...a); });
+// What fails also goes to soroka.log (chat names and errors, never message texts): a run that failed unseen can be traced.
+export const logged = <A extends unknown[], T>(what: string, fn: (...a: A) => T | Promise<T>) => async (...a: A) => {
+  try { return await fn(...a); } catch (e) { log(`${what}:`, errorText(e)); throw e; }
+};
 
 // ---------- settings & state ----------
 export type Settings = { wakeMode: string; draftModel: string; summaryModel: string; label: boolean; autostart: boolean; summaryBackground: boolean; style: string; language: string;
