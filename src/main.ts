@@ -15,9 +15,10 @@ import { t } from './i18n';
 import * as i18n from './i18n';
 import { data, file, ui, ownPage, log, writeJson, errorText, handle, OPTIONS, firstRun, state, saveState, waiting, pending, serial, settings, type Settings, type Draft, type Msg, type Summary } from './base';
 import { aiSkipped, skippedAuthor, notToAi, forAi, hhmm, quiet, setDnd, keywordHit, called, groupWide, wanted, authorOf, named, listed, skipDraft } from './filters';
-import { signInAsked, signInCard, onSignIn, signIn } from './signin';
+import { signInAsked, onSignIn, signIn } from './signin';
 import { jiraLinks } from './jira';
 import { startApi } from './api';
+import { toast, cardWindow, corner, toastWin, toastDraft, carded, toastQueue, keepCard, recent, intoCard } from './toast';
 import './update';
 
 // ---------- settings & state ----------
@@ -127,8 +128,8 @@ let panelTab: Tab | null = null; // null: the panel is closed
 export let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
 let tray: Tray;
 export let status: 'starting' | 'login' | 'ready' = 'starting';
-let quitting = false;
-const preload = path.join(__dirname, 'preload.js');
+export let quitting = false;
+export const preload = path.join(__dirname, 'preload.js');
 
 // Icons at 1×, 1.5× and 2× so the tray stays sharp at any display scaling.
 function image(size: number, opts?: Parameters<typeof icon.draw>[1]) {
@@ -137,7 +138,7 @@ function image(size: number, opts?: Parameters<typeof icon.draw>[1]) {
   return img;
 }
 export const APP_ICON = image(64);
-const APP_ICON_URL = `data:image/png;base64,${icon.png(72).toString('base64')}`;
+export const APP_ICON_URL = `data:image/png;base64,${icon.png(72).toString('base64')}`;
 
 let lastTray = '';
 export function refreshTray() {
@@ -237,82 +238,6 @@ handle('menu:size', (_e, width: number, height: number) => {
 });
 handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPage.focus(); ACTIONS[name]?.(); }); // '' = Esc
 
-// ---------- toasts: a card in the corner above the clock (as in AgentVitals), never takes focus ----------
-// reply: a message card (its draft n): reply in the card, quick reactions, the actions go to its "⋯" menu
-// stay: no timeout, the card waits for the user's answer; gone: it closed without one of its actions
-// stack: the mentions of one channel, in one card without a reply (key: 'chan:' + the channel)
-// full: the whole message, lines kept (a text to confirm)
-type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 'error'; long?: boolean; stay?: boolean; full?: boolean; click?: () => void; gone?: () => void;
-  actions?: { label: string; run: () => void }[]; reply?: { n: string; variants: string[]; ai: boolean; quick: string[]; msgs: Msg[]; brief: boolean; agent: boolean; marks: string[] };
-  stack?: { key: string; msgs: Msg[] } };
-// The cards (a message, the sign-in, a call): transparent, the page draws the card with its shadow and asks for its height.
-const CARD = 392;
-export const cardWindow = (o: Electron.BrowserWindowConstructorOptions = {}) => new BrowserWindow({ width: CARD, height: 200, show: false, frame: false,
-  transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: 'Soroka', webPreferences: { preload }, ...o });
-// On the primary screen: bottom right, `above` px higher, or top right.
-export function corner(win: BrowserWindow, height: number, above: number | 'top' = 0) {
-  const { workArea: wa } = screen.getPrimaryDisplay(), h = Math.ceil(height);
-  win.setBounds({ width: CARD, height: h, x: wa.x + wa.width - CARD, y: above === 'top' ? wa.y : wa.y + wa.height - h - above });
-}
-let toastWin: BrowserWindow | null = null;
-let toastDraft: string | undefined; // the message card on screen: its draft, or its channel's stack key
-const carded = (n: string) => toastDraft === n || toastQueue.some(x => (x.reply?.n ?? x.stack?.key) === n); // its card is up, or waits its turn
-let toastHandlers: ((() => void) | undefined)[] = [], toastGone: (() => void) | undefined;
-// One card at a time: a newer one waits its turn instead of wiping out the one on screen. A burst past 5 waiting comes as
-// one card counting the rest: they are in the tray's recent ones, and the messages in "Replies".
-const toastQueue: Toast[] = [];
-let toastOn = false, toastGuard: NodeJS.Timeout | undefined, toastMissed = 0, toastNow: Toast | undefined;
-const keepCard = () => { clearTimeout(toastGuard); toastGuard = undefined; }; // the user is busy with it: no minute closes it
-function nextToast() {
-  toastOn = false; clearTimeout(toastGuard); toastDraft = undefined; toastNow = undefined;
-  const gone = toastGone; toastGone = undefined; gone?.();
-  let next = toastQueue.shift();
-  if (!next && toastMissed) { next = { title: t('toast.more', { n: toastMissed }), message: t('toast.moreText'), long: true, click: () => showDrafts(true) }; toastMissed = 0; }
-  if (next) toast(next, true);
-}
-const recent: { at: number; title: string; click?: () => void }[] = []; // the last 10 toasts, for the tray menu
-export function toast(item: Toast, fromQueue = false) {
-  if (quitting) return; // a card now would open a new window, the quit would wait for it: closing the old card showed the next queued one
-  if (!fromQueue) { // a queued one was recorded when it came
-    recent.unshift({ at: Date.now(), title: item.title, click: item.click });
-    recent.splice(10);
-    refreshTray();
-  }
-  if (toastOn) { if (toastQueue.length < 5 || item.stay) toastQueue.push(item); else toastMissed++; return; } // a question to the user is never dropped
-  toastOn = true; toastDraft = item.reply?.n ?? item.stack?.key; toastNow = item;
-  if (!item.stay) toastGuard = setTimeout(nextToast, 60_000); // the card never reported back (its page crashed): don't block the rest
-  const { click, long, stay, gone, actions = [], ...card } = item;
-  toastHandlers = [click, ...actions.map(a => a.run)];
-  toastGone = gone;
-  const payload = { ...card, actions: actions.map(a => a.label), icon: APP_ICON_URL, life: stay ? 0 : long ? 10_000 : 4_000, // 10 s for what the user should act on
-    closeLabel: t('toast.close') };
-  if (toastWin) return toastWin.webContents.send('toast', payload);
-  toastWin = cardWindow({ height: 160 });
-  toastWin.loadFile(ui('toast.html'));
-  toastWin.webContents.once('did-finish-load', () => toastWin?.webContents.send('toast', payload));
-  toastWin.on('closed', () => { toastWin = null; nextToast(); });
-}
-handle('toast:size', (_e, height: number) => { // the card measured itself: sit it in the corner and show
-  if (!toastWin) return;
-  corner(toastWin, height, signInCard?.isVisible() ? signInCard.getBounds().height : 0); // the sign-in card stays below
-  toastWin.setAlwaysOnTop(true, 'pop-up-menu');
-  if (!toastWin.isVisible()) toastWin.showInactive(); // it also resizes a card on screen (the reply field, the menu): no second show
-});
-// the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
-handle('toast:focus', () => { keepCard(); toastWin?.setFocusable(true); toastWin?.focus(); });
-// the mouse on the card: the user is reading it, the next card does not take its place after the minute
-handle('toast:hold', () => { if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 10 * 60_000); } });
-// the card is done: its window closes and 'closed' shows the next one in a new window. A hidden window kept ~30 MB,
-// and its page drew nothing until shown again, so a card sent to it never came up.
-// a closing card takes no more messages: the next one of its chat comes in a card of its own
-handle('toast:hidden', () => { toastDraft = undefined; toastWin?.close(); });
-handle('toast:click', (_e, action: number) => { // -1 = the card itself
-  const run = toastHandlers[action + 1];
-  if (run) toastGone = undefined; // answered: not "closed without an answer"
-  toastDraft = undefined;
-  toastWin?.close();
-  run?.();
-});
 // a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come.
 // "Replies" keeps what the user types there too; a field they emptied gives the card back to the app's text.
 handle('draft:keep', (_e, n: string, text: unknown) => {
@@ -322,23 +247,6 @@ handle('draft:keep', (_e, n: string, text: unknown) => {
   Object.assign(d, text.trim() ? { text: text.slice(0, 5000), kept: !d.variants?.some(v => flat(v) === flat(text)) } : { text: '', kept: false });
   draftsChanged();
 });
-// A Claude session sends only what the user confirms in the app too: a card with the chat and the text, and the request
-// waits for the click. No answer in 3 minutes, or the card closed: not sent.
-export function confirmSend(title: string, text: string) {
-  return new Promise<boolean>(ok => {
-    let done = false;
-    const answer = (yes: boolean) => { if (!done) { done = true; clearTimeout(timer); ok(yes); } };
-    const card: Toast = { title: t('toast.claudeSends', { title }), message: text, tone: 'accent', stay: true, full: true, gone: () => answer(false),
-      actions: [{ label: t('act.send'), run: () => answer(true) }, { label: t('act.dontSend'), run: () => answer(false) }] };
-    // no answer in time: its card goes too, on screen or still waiting its turn (a click on it now would send nothing)
-    const timer = setTimeout(() => {
-      answer(false);
-      const i = toastQueue.indexOf(card);
-      if (i >= 0) toastQueue.splice(i, 1); else if (toastNow === card) toastWin?.close();
-    }, 3 * 60_000);
-    toast(card);
-  });
-}
 
 const TEAMS_PAGE = teams.TEAMS_PAGE;
 function createTeamsWindow() {
@@ -701,7 +609,7 @@ handle('settings:close', () => closeSettings());
 // The panel's summary tab, with the chat picked; the user chooses the period and starts it. With a result: shows a summary
 // made already (the daily digest, or one that went on after the panel was closed). From the tray or a toast the window comes up.
 // talk: a question asked in a card goes on here — its period and the talk so far
-const marksOf = (msgs: { text: string }[]) => markNames(findMarks(msgs.map(m => m.text)));
+export const marksOf = (msgs: { text: string }[]) => markNames(findMarks(msgs.map(m => m.text)));
 function showSummary(chatId?: string, result?: Summary, talk?: { period: string; history: Talk[] }) {
   if (!windowInUse()) showTeams();
   const page = openPanel('summary'), preset = { chatId, result, ...talk };
@@ -1126,14 +1034,6 @@ async function held(n: string) {
   if (kind === 'reply') return false;
   Object.assign(d, { held: true, reminded: true }); // no "still waiting for your answer" either: it waits for none
   saveState();
-  return true;
-}
-// One card per chat or channel: its card on screen takes the next message, and stays on for it
-function intoCard(key: string, msgs: Msg[]) {
-  if (toastDraft !== key || !toastWin) return false;
-  if (toastGuard) { clearTimeout(toastGuard); toastGuard = setTimeout(nextToast, 60_000); } // not once the user is typing in it
-  const wc = toastWin.webContents, send = () => wc.send('toast:msgs', { n: key, msgs, marks: marksOf(msgs) });
-  if (wc.isLoading()) wc.once('did-finish-load', send); else send(); // a new card's page: after its own payload
   return true;
 }
 // drafts mode: the variants made after the card came, into its card on screen or the one waiting its turn

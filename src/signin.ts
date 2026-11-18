@@ -1,7 +1,8 @@
 // Teams asking to sign in again
 import { BrowserWindow, session } from 'electron';
 import { log, errorText, handle, ui } from './base';
-import { refreshTray, cardWindow, corner, PLAIN, teamsPage } from './main';
+import { refreshTray, PLAIN, teamsPage } from './main';
+import { cardWindow, corner } from './toast';
 
 // Microsoft ended the sign-in (a password change, or IT asked) and Teams shows a banner whose "Sign in" does nothing here
 // (teams.watchSignIn). The app says so even with its window hidden: a card above the clock that follows the sign-in

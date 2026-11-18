@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { log, errorText } from './base';
 import { t } from './i18n';
-import { toast } from './main';
+import { toast } from './toast';
 
 // A minute after the start, then once a day; installed copies only. Nothing about the user goes along: a plain GET.
 // ponytail: tells and installs on a click; electron-updater (downloads in the background, installs on quit) when wanted
