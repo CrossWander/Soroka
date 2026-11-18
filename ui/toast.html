@@ -46,6 +46,7 @@
   .link:hover { color: var(--fg); text-decoration: underline; }
   .subline { display: flex; gap: 8px; align-items: baseline; }
   .link.brief { color: var(--accent); } /* next to "N messages": the row below has no room for it */
+  .subline .link::before { content: '·'; display: inline-block; margin-right: 8px; color: var(--muted); } /* "3 messages · Ask" */
   @media (prefers-reduced-motion: no-preference) { .bubble.fresh { animation: fresh 1.4s ease-out; } }
   @keyframes fresh { from { background: color-mix(in srgb, var(--accent) 26%, transparent); } }
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -62,7 +63,7 @@
   .close { background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; }
   .close:hover { color: var(--fg); }
   /* a message card: "Reply", Teams' three quick reactions and "⋯" in one row; "Reply" opens the field above it */
-  .row { grid-column: 2 / 4; display: flex; gap: 4px; margin-top: 10px; align-items: center; }
+  .row { grid-column: 2 / 4; display: flex; gap: 4px; margin-top: 10px; align-items: center; white-space: nowrap; } /* a squeezed button keeps one line */
   .row .main { margin-right: 6px; }
   .emoji { background: transparent; font-size: 16px; padding: 3px 5px; line-height: 0; }
   /* Teams' own pictures of its quick reactions, as in its hover bar: its strip of animation frames, cut to the first 20 px one.
@@ -78,7 +79,7 @@
     background: var(--menu); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
   .menu button { background: transparent; text-align: left; padding: 6px 10px; white-space: nowrap; }
   .menu button:hover { background: var(--btn-hover); }
-  /* "↗ Agent" and its ▾ for another period; it stands out when the messages carry ray-ids, stack traces, issue keys, file names */
+  /* "↗" (the agent; its name in the tooltip) and its ▾ for another period; it stands out when the messages carry ray-ids, stack traces, issue keys, file names */
   .pick { position: relative; display: flex; gap: 1px; }
   .pick > button { padding: 4px 8px; background: var(--btn); border-radius: 6px 0 0 6px; }
   .pick > button + button { padding: 4px 5px; border-radius: 0 6px 6px 0; }
@@ -120,11 +121,11 @@
     <div class="row" id="row" hidden>
       <button class="main" id="open" data-i18n="act.reply"></button>
       <button class="emoji" data-react="yes"><span><img alt="👍"></span></button><button class="emoji" data-react="heart"><span><img alt="❤️"></span></button><button class="emoji" data-react="laugh"><span><img alt="😆"></span></button>
-      <span class="pick" id="agent-pick" hidden><button id="agent" data-i18n="card.agent"></button><button id="agent-more" data-i18n-title="card.agentPeriod">▾</button>
+      <span class="pick" id="agent-pick" hidden><button id="agent" data-i18n-aria="card.agent">↗</button><button id="agent-more" data-i18n-title="card.agentPeriod">▾</button>
         <span class="menu" id="agent-menu" hidden><button data-period="q" data-i18n="summary.q"></button><button data-period="d0" data-i18n="summary.d0"></button>
           <button data-period="d7" data-i18n="summary.d7"></button><button data-period="n50" data-i18n="summary.n50"></button></span></span>
       <span class="more"><button id="more" data-i18n-title="card.more">⋯</button>
-        <span class="menu" id="menu" hidden><button id="m-react" data-i18n="card.reactions"></button><span id="m-actions"></span><button id="m-later" data-i18n="card.later"></button></span></span>
+        <span class="menu" id="menu" hidden><button id="m-ask" data-i18n="card.ask" hidden></button><button id="m-react" data-i18n="card.reactions"></button><span id="m-actions"></span><button id="m-later" data-i18n="card.later"></button></span></span>
     </div>
   </div>
 <script src="i18n.js"></script>
@@ -164,7 +165,8 @@
     $('talk').hidden = !many; $('message').hidden = many; $('sum').hidden = true;
     $('brief').hidden = !(briefOk && msgs.length >= 4);
     $('brief').title = $('ask-open').title = msgs.some(cut) ? t('card.briefRead') : ''; // the cut ones are read whole first
-    $('ask-open').hidden = !(briefOk && n && msgs.length); // a question about a chat's messages: not for a channel's card
+    $('ask-open').hidden = !(briefOk && n && msgs.length > 1); // a question about a chat's messages: not for a channel's card
+    $('m-ask').hidden = !(briefOk && n && msgs.length === 1); // one message: no "N messages" to stand beside, so in "⋯"
     $('sub').textContent = msgs.length > 1 ? plural(msgs.length) : '';
     $('subline').hidden = msgs.length < 2 && $('ask-open').hidden;
     if (!many) return;
@@ -232,6 +234,7 @@
     if (!keys) { keys = true; await bridge.invoke('toast:focus'); }
     $('ask-field').focus();
   };
+  $('m-ask').onclick = e => { $('menu').hidden = true; $('ask-open').onclick(e); };
   function ask() {
     const q = $('ask-field').value.trim();
     if (!q) return $('ask-field').focus();
