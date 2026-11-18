@@ -14,13 +14,14 @@
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--fg); }
   body { display: flex; flex-direction: column; justify-content: flex-end; }
   [hidden] { display: none !important; }
-  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 0 12px; align-items: start; position: relative;
+  .card { margin: 12px 16px 20px; padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: start; position: relative;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.28); cursor: pointer;
     opacity: 0; transform: translateY(110%); transition: opacity .38s cubic-bezier(.215,.61,.355,1), transform .38s cubic-bezier(.215,.61,.355,1); }
   .card.shown { opacity: 1; transform: none; }
   .card.leaving { transition-duration: .22s; transition-timing-function: cubic-bezier(.55,.055,.675,.19); }
-  img { width: 36px; height: 36px; }
-  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .top { display: flex; align-items: center; gap: 6px; } /* the magpie, small, before the title: the card is Soroka's */
+  .top img { width: 16px; height: 16px; flex: none; }
+  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .title.accent { color: var(--accent); } .title.error { color: var(--error); }
   .message { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
   /* the text to confirm (a Claude session's send): all of it, lines kept, scrolling past 260 px */
@@ -52,7 +53,7 @@
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .hint.error { color: var(--error); }
   .hint:empty, .actions:empty { display: none; }
-  .actions { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .actions { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   button { font: inherit; font-size: 13px; border: 0; border-radius: 6px; color: var(--fg); cursor: pointer; }
   .actions button, .main, .more > button { padding: 4px 10px; background: var(--btn); }
   .actions button:first-child, .main { background: var(--accent); color: var(--on-accent); }
@@ -63,7 +64,7 @@
   .close { background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; margin: -4px -6px 0 0; }
   .close:hover { color: var(--fg); }
   /* a message card: "Reply", Teams' three quick reactions and "⋯" in one row; "Reply" opens the field above it */
-  .row { grid-column: 2 / 4; display: flex; gap: 4px; margin-top: 10px; align-items: center; white-space: nowrap; } /* a squeezed button keeps one line */
+  .row { grid-column: 1 / 3; display: flex; gap: 4px; margin-top: 10px; align-items: center; white-space: nowrap; } /* a squeezed button keeps one line */
   .row .main { margin-right: 6px; }
   .emoji { background: transparent; font-size: 16px; padding: 3px 5px; line-height: 0; }
   /* Teams' own pictures of its quick reactions, as in its hover bar: its strip of animation frames, cut to the first 20 px one.
@@ -86,10 +87,10 @@
   .pick > button:hover { background: var(--btn-hover); }
   .pick > .hot { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .pick .menu { right: auto; left: 0; }
-  .reply { grid-column: 2 / 4; display: flex; gap: 6px; margin-top: 10px; cursor: default; }
+  .reply { grid-column: 1 / 3; display: flex; gap: 6px; margin-top: 10px; cursor: default; }
   .reply input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--fg); }
   /* quick replies under the field: a click puts one into it */
-  .quick { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; cursor: default; }
+  .quick { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; cursor: default; }
   .quick button { font-size: 12px; padding: 2px 9px; border-radius: 10px; background: var(--btn); }
   .quick button:hover { background: var(--btn-hover); }
   .tool { width: 30px; background: var(--btn); font-size: 14px; }
@@ -106,8 +107,7 @@
 </head>
 <body>
   <div class="card" id="card">
-    <img id="icon" alt="">
-    <div><div class="title" id="title"></div><div class="subline" id="subline" hidden><span class="sub" id="sub"></span><button class="link brief" id="brief" data-i18n="card.brief" hidden></button><button class="link brief" id="ask-open" data-i18n="card.ask" hidden></button></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div>
+    <div><div class="top"><img id="icon" alt=""><div class="title" id="title"></div></div><div class="subline" id="subline" hidden><span class="sub" id="sub"></span><button class="link brief" id="brief" data-i18n="card.brief" hidden></button><button class="link brief" id="ask-open" data-i18n="card.ask" hidden></button></div><div class="message" id="message"></div><div class="talk" id="talk" hidden></div>
       <div class="reply" id="askbox" hidden><input id="ask-field" maxlength="500" data-i18n-placeholder="card.askPh"><button class="send" id="ask-send" data-i18n-title="card.send">➤</button></div>
       <div class="sum" id="sum" hidden><div class="head" id="sum-head"></div><div id="sum-text"></div><button class="link" id="show-all" data-i18n="card.showAll"></button><button class="link brief" id="continue" data-i18n="card.continue" hidden></button></div><div class="hint" id="hint"></div></div>
     <button class="close" id="close">✕</button>
