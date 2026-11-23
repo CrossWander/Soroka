@@ -341,9 +341,8 @@ export function showTeams() {
   teamsWin.focus();
   teamsPage.focus();
   void (async () => {
-    // a long-lived page drifts from the real state (stale badges, deleted messages with "Undo"): reload it if it is old — never during a call
-    if (status === 'ready' && Date.now() - loadedAt > 30 * 60_000 && !(await calling())) await serial(() => connect(false));
-    // then back to the user's chat where they were, or what a card opens; nothing to go back to (a start): "select a chat"
+    // no reload here: the user waited for Teams to load each time they opened it; a long-lived page is refreshed while hidden (tick)
+    // back to the user's chat where they were, or what a card opens; nothing to go back to (a start): "select a chat"
     // over the parked self-chat, as Teams starts with none open
     if (parked || opening) await serial(async () => {
       const left = leftChat, open = opening;
