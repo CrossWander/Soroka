@@ -7,7 +7,7 @@ import { cardWindow, setRingCard } from './toast';
 import { showTeams, teamsView, teamsWin, closeSettings, newTeamsPage, connect, APP_ICON, preload, TEAMS_PAGE } from './main';
 
 // Teams rings in its own page; the app mirrors that toast — who calls, and Teams' own buttons — in a window of its own
-// at the top right, for as long as Teams rings. Teams shows a started meeting for a few seconds only: the app keeps it
+// at the bottom right, above the other cards (toast.ts placeRing), for as long as Teams rings. Teams shows a started meeting for a few seconds only: the app keeps it
 // 5 minutes, and "Join" then goes through the meeting chat. Accepting or joining shows the Teams window with the call.
 export let ring: (teams.Ring & { live: boolean }) | null = null; // live: Teams still shows its toast
 let ringWin: BrowserWindow | null = null;
@@ -104,6 +104,7 @@ function popOutCall(what: string) {
   win.on('minimize', showMini);
   win.on('restore', () => miniWin?.close());
   win.show();
+  void teams.stopUi().catch(() => {}); // still this page's: newTeamsPage attaches the next one
   newTeamsPage();
   void serial(() => connect(false)).catch(e => log('call: chats page:', errorText(e)));
 }

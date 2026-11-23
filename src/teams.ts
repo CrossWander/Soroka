@@ -265,7 +265,8 @@ export async function watchUi(icon: string, onAct: (act: UiAct) => void, onBar: 
     w.__tbUiWatch?.disconnect();
     clearTimeout(w.__tbBarLost);
     w.__tbBarSent = undefined; // a new watcher: the app hears where things are again
-    const tell = (geo: string) => { clearTimeout(w.__tbBarLost); if (geo !== w.__tbBarSent) { w.__tbBarSent = geo; w[barName]?.(geo); } };
+    // a header back within its second cancels the loss: the next one counts its own second
+    const tell = (geo: string) => { clearTimeout(w.__tbBarLost); w.__tbBarLost = 0; if (geo !== w.__tbBarSent) { w.__tbBarSent = geo; w[barName]?.(geo); } };
     const hex = (c: string) => '#' + (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(n => Math.round(Number(n)).toString(16).padStart(2, '0')).join('');
     // the header's own background, or the first one behind it that is not transparent
     const bgOf = (e: Element | null) => {
@@ -295,6 +296,7 @@ export async function watchUi(icon: string, onAct: (act: UiAct) => void, onBar: 
       if (!group?.hasAttribute('data-tb-group')) {
         group = document.createElement('span');
         group.setAttribute('data-tb-group', '');
+        group.addEventListener('mousedown', e => e.preventDefault()); // the caret stays where the user types, as with the strip's ▤
         group.addEventListener('click', e => { const b = (e.target as Element).closest('button'); if (b) w[name]?.(b.dataset.tbAct); });
         more!.before(group);
       }
@@ -368,6 +370,14 @@ export async function watchUi(icon: string, onAct: (act: UiAct) => void, onBar: 
 }
 // The app's state for its buttons in the page: what they say, which are on, what runs
 export const showUi = (ui: PageUi): Promise<void> => run(ui => { (window as any).__tbUi = ui; (window as any).__tbRender?.(); }, ui);
+// The page leaves for a call window (calls.ts popOutCall): its watcher stops and Soroka's buttons go with it — that page's
+// header is hidden there, and its reports would move the main window's new page.
+export const stopUi = (): Promise<void> => run(() => {
+  const w = window as any;
+  w.__tbUiWatch?.disconnect(); clearTimeout(w.__tbBarLost); w.__tbRender = null; w.__tbUi = null;
+  document.querySelectorAll('[data-tb-chips], [data-tb-group], [data-tb-logo]').forEach(e => e.remove());
+  document.querySelectorAll('[data-tb-bar]').forEach(e => e.removeAttribute('data-tb-bar'));
+});
 
 // ---------- calls: an incoming call, or a meeting that started, as Teams shows it in its page ----------
 // Teams' toast for them, at the bottom right, marks its parts with data-testid (its notifications app, read in its bundle):

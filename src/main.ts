@@ -327,8 +327,9 @@ export function newTeamsPage() {
   // its window.open: openWindow, set for every page (web-contents-created)
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
-  // a new document (a load, F5, the sign-in page) has no header until its watcher finds one: Soroka's strip meanwhile
-  page.on('did-start-navigation', e => { if (e.isMainFrame && !e.isSameDocument && main()) onBar(null); });
+  // a new document (a load, F5, the sign-in page) has no header until its watcher finds one: Soroka's strip meanwhile.
+  // On its commit, not its start: a navigation that never commits (a download, a stopped load) leaves the page as it was.
+  page.on('did-navigate', () => { if (main()) onBar(null); });
   // Nothing in the Teams page drags the window but the header watchUi found ([data-tb-bar] in teams.UI_CSS: its empty space).
   // No rule for the rest: Teams sets no app-region of its own (none in its style sheets, checked live 2026-11-23), and an
   // explicit no-drag on every box — the rule here before — cut the drag area under the header wherever a box ran under it
@@ -583,7 +584,7 @@ export function openPanel(tab: Tab) {
   if (panelTab === 'drafts' && tab !== 'drafts') panelSeenAt = Date.now();
   if (shown !== page) {
     if (shown) teamsWin.contentView.removeChildView(shown);
-    teamsWin.contentView.addChildView(page, 1); // above Teams, under the settings and the menu
+    teamsWin.contentView.addChildView(page, 1); // above Teams, under the settings
   }
   panelTab = tab;
   layout();
@@ -911,7 +912,8 @@ async function scan(openId?: string) {
     // the card is an incoming one now, a request's or a nudge's too (an answer that came while the reminder was being written)
     const kind: Draft['kind'] = (up || quietly ? d.kind === 'fyi' : fyi) ? 'fyi' : 'incoming';
     Object.assign(d, { last, context, variants: undefined, text: d.kept ? d.text : '', kind, msgs,
-      ...(up || quietly ? {} : { note, urgent }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined }) });
+      ...(up || quietly ? {} : { note, urgent }), ...(quietly ? {} : { at: Date.now(), remindAt: undefined, reminded: false, held: undefined,
+        back: undefined, from: undefined, ready: undefined }) }); // an incoming card now: no red, no dot (src/badge.ts)
     draftsChanged();
     if (!quietly) found.push(old);
   }
