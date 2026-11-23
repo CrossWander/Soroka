@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/icon.png" width="112" alt="Значок Сороки: сорока з вишитим рукавом замість крила"></p>
+<p align="center"><img src="docs/icon.png" width="112" alt="Значок Сороки: сорока на бульбашці чату"></p>
 
 <h1 align="center">Сорока</h1>
 

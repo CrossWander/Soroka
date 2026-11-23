@@ -1,11 +1,13 @@
-// App and tray icon, drawn in code: a magpie (soroka) on the app's purple tile, optionally a red badge like Teams'.
-// Pure Node (no Electron), so the build can render build/icon.png with it too.
+// App and tray icon, drawn in code: the magpie (soroka) of the empty-state picture perched on Teams' purple chat bubble
+// with a typing "…", optionally a red badge like Teams'. Pure Node (no Electron), so the build can render build/icon.png with it too.
 import zlib from 'node:zlib';
 
 type RGBA = [number, number, number, number];
 type Shape = (x: number, y: number) => boolean;
+type Paint = RGBA | ((x: number, y: number) => RGBA);
+type Pt = [number, number];
 const PURPLE: RGBA = [91, 95, 199, 255], GREY: RGBA = [138, 136, 134, 255], WHITE: RGBA = [255, 255, 255, 255], RED: RGBA = [209, 52, 56, 255];
-const INK: RGBA = [22, 22, 30, 255]; // the magpie's black
+const hex = (h: string, a = 1): RGBA => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).concat(255 * a) as RGBA;
 
 const rrect = (x0: number, y0: number, x1: number, y1: number, r: number): Shape => (x, y) => {
   const dx = Math.max(x0 + r - x, 0, x - (x1 - r)), dy = Math.max(y0 + r - y, 0, y - (y1 - r));
@@ -16,28 +18,100 @@ const ellipse = (cx: number, cy: number, rx: number, ry: number, deg = 0): Shape
   const c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
   return (x, y) => { const dx = x - cx, dy = y - cy; return ((dx * c + dy * s) / rx) ** 2 + ((dy * c - dx * s) / ry) ** 2 <= 1; };
 };
-const both = (a: Shape, b: Shape): Shape => (x, y) => a(x, y) && b(x, y);
 const any = (...shapes: Shape[]): Shape => (x, y) => shapes.some(s => s(x, y));
 const tri = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number): Shape => (x, y) => {
   const side = (px: number, py: number, qx: number, qy: number) => (x - qx) * (py - qy) - (px - qx) * (y - qy);
   const d = [side(ax, ay, bx, by), side(bx, by, cx, cy), side(cx, cy, ax, ay)];
   return !(d.some(v => v < 0) && d.some(v => v > 0));
 };
-// Vyshyvanka embroidery along a sleeve whose axis goes through (cx, cy) at `deg`: a chain of red rhombuses with black
-// hearts, in cross-stitch. Small icons get fewer, coarser stitches; the tray only a dotted red line. Returns [red, black].
-const embroidery = (cx: number, cy: number, deg: number, size: number, k: number): [Shape, Shape] => {
-  const st = Math.max(1, Math.floor(size / 64)) / k, r = size < 32 ? 0 : size < 48 ? 1 : 2, period = 2 * r + 2;
-  const c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
-  const cell = (x: number, y: number) => {
-    const dx = x - cx, dy = y - cy, gu = Math.round((dx * c + dy * s) / st), dv = Math.round((dy * c - dx * s) / st);
-    const du = (((gu + r + 1) % period) + period) % period - (r + 1);
-    return { du, dv, d: Math.abs(du) + Math.abs(dv) };
-  };
-  return [
-    (x, y) => cell(x, y).d === r,
-    (x, y) => { const { du, dv, d } = cell(x, y); return r > 0 && (d === 0 || (dv === 0 && du === -(r + 1))); },
-  ];
+// SVG paths (M, L, C, Z) of the empty-state picture's magpie (src/main.ts, pickPicture), in that picture's coordinates,
+// as polylines on the 32×32 design grid: on the icon the magpie is 1.25× its picture size, feet on the bubble's top edge.
+const at = (x: number, y: number): Pt => [(x * 1.25 - 22) / 8, (y * 1.25 - 22) / 8];
+const lw = (w: number) => (w * 1.25) / 8; // a picture line width on the grid
+function polylines(d: string): Pt[][] {
+  const t = d.match(/[MLCZ]|-?[\d.]+/g) ?? [], out: Pt[][] = [];
+  let i = 0, cmd = '', p: Pt = [0, 0];
+  const n = () => +t[i++];
+  while (i < t.length) {
+    if (/[MLCZ]/.test(t[i])) cmd = t[i++];
+    if (cmd === 'M') { p = at(n(), n()); out.push([p]); cmd = 'L'; }
+    else if (cmd === 'L') { p = at(n(), n()); out[out.length - 1].push(p); }
+    else if (cmd === 'C') { // a cubic Bézier as 8 straight pieces
+      const s = p, a = at(n(), n()), b = at(n(), n()), c = at(n(), n());
+      for (let j = 1; j <= 8; j++) {
+        const u = j / 8, v = 1 - u, m = [v * v * v, 3 * v * v * u, 3 * v * u * u, u * u * u];
+        out[out.length - 1].push([0, 1].map(k => m[0] * s[k] + m[1] * a[k] + m[2] * b[k] + m[3] * c[k]) as Pt);
+      }
+      p = c;
+    }
+  }
+  return out;
+}
+const box = (pts: Pt[], pad = 0) => {
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  return { x0: Math.min(...xs) - pad, x1: Math.max(...xs) + pad, y0: Math.min(...ys) - pad, y1: Math.max(...ys) + pad };
 };
+// Plain loops over flat arrays: these run 16 times per pixel, and the window icons are drawn when the app starts.
+const fill = (d: string): Shape => { // even-odd, as the paths have no holes
+  const poly = polylines(d)[0], b = box(poly), xs = Float64Array.from(poly, q => q[0]), ys = Float64Array.from(poly, q => q[1]);
+  return (x, y) => {
+    if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) return false;
+    let inside = false;
+    for (let i = 0, j = xs.length - 1; i < xs.length; j = i++)
+      if (ys[i] > y !== ys[j] > y && x < ((xs[j] - xs[i]) * (y - ys[i])) / (ys[j] - ys[i]) + xs[i]) inside = !inside;
+    return inside;
+  };
+};
+const stroke = (lines: Pt[][], w: number): Shape => { // round caps and joins
+  const h = w / 2, b = box(lines.flat(), h); // per segment: its ends, then its box grown by h
+  const s = Float64Array.from(lines.flatMap(l => l.slice(1).flatMap(([bx, by], i) => {
+    const [ax, ay] = l[i];
+    return [ax, ay, bx, by, Math.min(ax, bx) - h, Math.max(ax, bx) + h, Math.min(ay, by) - h, Math.max(ay, by) + h];
+  })));
+  return (x, y) => {
+    if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) return false;
+    for (let i = 0; i < s.length; i += 8) {
+      if (x < s[i + 4] || x > s[i + 5] || y < s[i + 6] || y > s[i + 7]) continue;
+      const ax = s[i], ay = s[i + 1], dx = s[i + 2] - ax, dy = s[i + 3] - ay;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+      if ((ax + t * dx - x) ** 2 + (ay + t * dy - y) ** 2 <= h * h) return true;
+    }
+    return false;
+  };
+};
+// SVG's linearGradient over a path's bounding box, from its top left towards (gx, gy) of the box
+const gradient = (d: string, gx: number, gy: number, stops: [number, string][]): Paint => {
+  const b = box(polylines(d)[0]), cs = stops.map(([o, c]) => [o, hex(c)] as const), len = gx * gx + gy * gy;
+  return (x, y) => {
+    const t = Math.max(0, Math.min(1, (((x - b.x0) / (b.x1 - b.x0)) * gx + ((y - b.y0) / (b.y1 - b.y0)) * gy) / len));
+    let i = 1;
+    while (i < cs.length - 1 && cs[i][0] < t) i++;
+    const [o0, c0] = cs[i - 1], [o1, c1] = cs[i], u = Math.max(0, Math.min(1, (t - o0) / (o1 - o0 || 1)));
+    return c0.map((v, k) => v + (c1[k] - v) * u) as RGBA;
+  };
+};
+
+const TAIL = 'M116 80 C142 92 176 110 216 126 C219 128 217 132 212 131 C174 121 138 107 112 95 Z';
+const BODY = 'M44 37 C45 26 61 23 68 30 C75 37 85 45 99 51 C111 56 121 66 127 76 L121 88 C105 98 82 100 66 94 C52 88 44 76 43 62 C42 55 42 49 44 45 Z';
+const WING = 'M62 58 C78 51 98 56 114 66 C128 75 138 85 145 96 C130 93 110 87 95 81 C80 75 68 68 62 58 Z';
+const BEAK = 'M45 39.5 C39 40 31 43 23.5 47 C31 48.8 39 50.2 46 50.6 Z';
+const BELLY = 'M49 74 C56 88 76 96 100 94 C110 92 116 89 119 85 C104 81 84 74 66 66 C58 63 51 67 49 74 Z';
+const SCAPULAR = 'M64 58 C76 53 92 55 105 62 C97 67 84 69 73 66 C68 64 65 61 64 58 Z';
+const OUTLINE = [TAIL, BODY, WING, BEAK].map(d => { const l = polylines(d)[0]; return [...l, l[0]]; });
+const MAGPIE: [Shape, Paint][] = [ // bottom to top
+  [fill(TAIL), gradient(TAIL, 1, 0.6, [[0, '#164a44'], [0.45, '#2a7f97'], [0.8, '#3d3590'], [1, '#1e1c3a']])], // iridescent
+  [stroke(polylines('M88 96 L86 112 M98 97 L97 112 M80 113 L92 112 M92 113 L102 112'), lw(2.4)), hex('#16181d')], // legs
+  [fill(BODY), gradient(BODY, 0, 1, [[0, '#2a2e37'], [1, '#0c0d10']])],
+  [ellipse(...at(58, 32), lw(8), lw(3.5), -18), hex('#ffffff', 0.16)], // the sheen on its head
+  [fill(BELLY), hex('#f4f4f2')],
+  [fill(WING), gradient(WING, 1, 1, [[0, '#2b4680'], [0.6, '#1f6a86'], [1, '#14232e']])],
+  [fill(SCAPULAR), hex('#f4f4f2')],
+  [stroke(polylines('M100 72 C114 78 128 86 140 94 M96 77 C110 83 122 89 134 94'), lw(0.9)), hex('#7fc4e6', 0.6)], // wing sheen
+  [fill(BEAK), hex('#0b0c0e')],
+  [circle(...at(55.5, 40), lw(2.6)), hex('#050506')], // eye
+  [circle(...at(54.6, 39.1), lw(0.9)), hex('#ffffff', 0.9)],
+];
+const DETAIL = new Set([1, 3, 7, 10].map(i => MAGPIE[i])); // legs, sheens, the eye's glint: lost below 48 px, they only blur it
 // 3x5 pixel font for the badge
 const FONT: Record<string, string> = {
   0: '111101101101111', 1: '010110010010111', 2: '111001111100111', 3: '111001111001111', 4: '101101111001001',
@@ -52,25 +126,17 @@ const label = (s: string, cx: number, cy: number, cell: number): Shape => {
   };
 };
 
-/** RGBA pixels of a size×size icon; `badge` is "1".."9", "9+" or "!"; `grey` while not connected; `bare`: the magpie alone. */
-export function draw(size: number, { badge, grey, bare }: { badge?: string; grey?: boolean; bare?: boolean } = {}) {
-  const tile = grey ? GREY : PURPLE, k = size / 32;
-  const m = size > 32 ? 1 : 0; // no margin at tray sizes: there it only made the tile smaller than its neighbours and blurred its edge
-  // the magpie faces left, so a badge in the bottom right corner covers only its tail
-  const body = ellipse(16, 17.5, 7.2, 4.9, 22), wing = ellipse(18, 15.8, 6.2, 2.4, 22);
-  // the wing is a white vyshyvanka sleeve inside a thin black rim (at least ¾ px), which parts it from the tile and the belly
-  const rim = Math.max(0.6, 0.75 / k), sleeve = both(ellipse(16, 17.5, 7.2 - rim, 4.9 - rim, 22), ellipse(18, 15.8, 6.2 - rim, 2.4 - rim, 22));
-  const [red, black] = embroidery(18, 15.8, 22, size, k);
-  const layers: [Shape, RGBA | null][] = [ // design grid 32×32, later layers on top; null cuts a hole
-    [rrect(m, m, 32 - m, 32 - m, 7), bare ? null : tile],
-    [any(tri(19.5, 18, 21, 21.5, 29.5, 29), tri(19.5, 18, 29.5, 29, 30.5, 26.5)), INK], // the long tail, down to the right
-    [any(body, circle(9.2, 10.6, 3.9), ellipse(11.6, 13.4, 3.4, 3, -35)), INK], // body, head and neck
-    [tri(6, 9.4, 1.8, 11, 6, 12.5), INK], // beak
-    [sleeve, WHITE],
-    [both(sleeve, red), RED],
-    [both(sleeve, black), INK],
-    [both(both(body, ellipse(13.4, 20.6, 5.2, 3.2, 12)), (x, y) => !wing(x, y)), WHITE], // the white belly, below the rim
-    [circle(8.2, 9.8, 0.75), WHITE], // eye
+/** RGBA pixels of a size×size icon; `badge` is "1".."9", "9+" or "!"; `grey` while not connected. */
+export function draw(size: number, { badge, grey }: { badge?: string; grey?: boolean } = {}) {
+  const k = size / 32;
+  // a light rim parts the black magpie from a dark taskbar (lost on a light one): the picture's, but at least 1 px outside the
+  // bird; its inner half is under the magpie's own opaque layers
+  const rim = stroke(OUTLINE, Math.max(lw(3.2), 2 / k));
+  const layers: [Shape, Paint | null][] = [ // design grid 32×32, later layers on top; null cuts a hole
+    [any(rrect(2, 14.75, 30, 29.75, 5), tri(11.5, 29.75, 5.75, 31.75, 7, 28)), grey ? GREY : PURPLE], // the bubble, its tail down left
+    [any(circle(11.5, 23, 1.75), circle(16.5, 23, 1.75), circle(21.5, 23, 1.75)), WHITE], // typing…
+    [rim, hex('#dfe2ec', 0.75)],
+    ...MAGPIE.filter(l => size >= 48 || !DETAIL.has(l)), // it faces left, so a badge in the bottom right corner covers its tail
   ];
   if (badge) { // like Teams: a pill in the bottom right corner, cut out of the tile; the digits on whole pixels stay sharp
     const c = Math.max(1, Math.floor(size / 16)), h = 9 * c, w = Math.max(h, (badge.length * 4 - 1) * c + 4 * c);
@@ -81,13 +147,20 @@ export function draw(size: number, { badge, grey, bare }: { badge?: string; grey
 
   const N = 4, px = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    let r = 0, g = 0, b = 0, hits = 0;
+    let r = 0, g = 0, b = 0, cover = 0;
     for (let sy = 0; sy < N; sy++) for (let sx = 0; sx < N; sx++) { // 4×4 supersampling for smooth edges
       const u = (x + (sx + 0.5) / N) / k, v = (y + (sy + 0.5) / N) / k;
-      for (let i = layers.length - 1; i >= 0; i--) if (layers[i][0](u, v)) { const c = layers[i][1]; if (c) { r += c[0]; g += c[1]; b += c[2]; hits++; } break; }
+      let left = 1; // what the layers above let through: a translucent layer shows the ones below it
+      for (let i = layers.length - 1; i >= 0 && left > 0; i--) {
+        const [shape, paint] = layers[i];
+        if (!shape(u, v)) continue;
+        if (!paint) break;
+        const c = typeof paint === 'function' ? paint(u, v) : paint, w = (left * c[3]) / 255;
+        r += c[0] * w; g += c[1] * w; b += c[2] * w; cover += w; left -= w;
+      }
     }
     const i = (y * size + x) * 4;
-    if (hits) { px[i] = r / hits; px[i + 1] = g / hits; px[i + 2] = b / hits; px[i + 3] = (255 * hits) / (N * N); }
+    if (cover) { px[i] = r / cover; px[i + 1] = g / cover; px[i + 2] = b / cover; px[i + 3] = (255 * cover) / (N * N); }
   }
   return px;
 }

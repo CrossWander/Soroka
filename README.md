@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/icon.png" width="112" alt="Soroka's icon: a magpie whose wing is an embroidered sleeve"></p>
+<p align="center"><img src="docs/icon.png" width="112" alt="Soroka's icon: a magpie perched on a chat bubble"></p>
 
 <h1 align="center">Soroka</h1>
 
