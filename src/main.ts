@@ -314,6 +314,7 @@ export function newTeamsPage() {
 const watch = () => Promise.all([
   teams.watchChats(() => { log('unread chats changed'); void tick(); }), // the timer still checks if this fails
   teams.watchRings(onRing),
+  teams.watchToasts(x => log(`teams toast: ${x.kind} · ${x.title} · ${x.outline}`)), // what Teams shows in this page, to learn from
   teams.watchCall(onCall),
   teams.watchSignIn(onSignIn),
   jiraLinks(),

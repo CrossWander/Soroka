@@ -260,6 +260,40 @@ export async function ringClick(i: number) {
   if (veiling) { await veiling.page.removeInsertedCSS(veiling.key).catch(() => {}); veiling = null; }
   await click(`[data-tb-ring="${i}"]${OUT}`); // a message could carry one too
 }
+// Teams' own toasts in this page, of any kind, reported once each — only logged for now, to learn what Teams shows here.
+// Each sits in a notification-wrapper; its content's data-testid is the kind (normal-notification for a message,
+// calling-notification, meeting-notification, calling-notification-compact-layout). title: the content's first text line.
+export type TeamsToast = { kind: string; title: string; outline: string };
+const TOASTS = 'tbToasts';
+export async function watchToasts(onToast: (toast: TeamsToast) => void) {
+  await bind(TOASTS, payload => {
+    const x = JSON.parse(payload);
+    onToast({ kind: String(x.kind ?? ''), title: String(x.title ?? ''), outline: String(x.outline ?? '') });
+  });
+  await run(([name, sel]) => {
+    const w = window as any;
+    w.__tbToasts?.disconnect();
+    const seen = new WeakSet<Element>();
+    let timer = 0;
+    const look = () => {
+      timer = 0;
+      for (const e of document.querySelectorAll(sel)) {
+        if (seen.has(e) || !e.getClientRects().length) continue;
+        seen.add(e);
+        const content = e.querySelector('[data-testid$="-notification"], [data-testid$="-compact-layout"]') ?? e;
+        let title = '';
+        const walk = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n && !title; n = walk.nextNode()) if (!n.parentElement?.closest('button')) title = n.textContent!.trim();
+        w[name]?.(JSON.stringify({ kind: content.getAttribute('data-testid') || '', title: title.slice(0, 80),
+          outline: [...e.querySelectorAll('[data-testid]')].map(x => x.getAttribute('data-testid')).join(' ').slice(0, 300) }));
+      }
+    };
+    w.__tbToasts = new MutationObserver(() => { if (!timer) timer = window.setTimeout(look, 500); });
+    w.__tbToasts.observe(document.body, { subtree: true, childList: true });
+    look();
+  }, [TOASTS, `[data-testid="notification-wrapper"]${OUT}`]);
+}
+
 // "Join" after Teams' own meeting toast is gone: the meeting chat named in the toast, and its Join button.
 // The longest title in it: a meeting named with a part of another's title ("Daily") does not take its place.
 export async function joinMeeting(text: string) {
