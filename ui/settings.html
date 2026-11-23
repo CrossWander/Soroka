@@ -13,6 +13,10 @@
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
   /* as Teams' and Windows 11's own settings: the sections on the left, one of them on the right */
   .shell { height: 100%; display: flex; }
+  /* at the window's top (ui/frame.js): a band that moves the window, as high as Teams' header, in the strip's colours */
+  .framed body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: var(--frame-top); app-region: drag; background: #ebebeb; }
+  .framed .shell { height: calc(100% - var(--frame-top)); margin-top: var(--frame-top); }
+  @media (prefers-color-scheme: dark) { .framed body::before { background: #1f1f1f; } }
   nav { width: 220px; flex: none; box-sizing: border-box; padding: 14px 8px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
   nav h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px 10px; }
   nav button { border: 0; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; position: relative; }
@@ -208,6 +212,7 @@
   </div>
 </div>
 <script src="i18n.js"></script>
+<script src="frame.js"></script>
 <script type="module">
   await i18n;
   const $ = id => document.getElementById(id);

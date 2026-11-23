@@ -5,8 +5,9 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title>Soroka</title>
 <style>
-  /* The window's title bar, 32 px as Windows' own. Its empty space moves the window, a double click maximizes it, a right click
-     opens the system menu; Windows draws — ☐ ✕ over the right end, and env() keeps the buttons clear of them. */
+  /* The window's title bar while Teams' own header is not there (src/main.ts: the sign-in page, Teams loading, an error), 32 px
+     as Windows' own; with it, the Teams page covers this one. Its empty space moves the window, a double click maximizes it,
+     a right click opens the system menu; Windows draws — ☐ ✕ over the right end, and env() keeps the buttons clear of them. */
   :root { color-scheme: light dark; --bg: #ebebeb; --fg: #242424; --muted: #616161; --hover: rgba(0, 0, 0, .07); --dot: #5b5fc7; }
   @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1f; --fg: #fff; --muted: #adadad; --hover: #3a3a3a; --dot: #8f95ff; } }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
@@ -14,12 +15,13 @@
   header { position: fixed; top: 0; left: env(titlebar-area-x, 0); width: env(titlebar-area-width, 100%); height: env(titlebar-area-height, 32px);
     box-sizing: border-box; padding-left: 16px; display: flex; align-items: center; gap: 2px; app-region: drag; }
   body.inactive header > * { opacity: .5; } /* as every title bar: faded while another window is in use */
+  body.covered header { display: none; } /* Teams' header is the title bar: no drag area of this page under it */
   #logo { width: 16px; height: 16px; margin-right: 8px; flex: none; }
   button { app-region: no-drag; font: inherit; color: inherit; background: none; border: 0; border-radius: 4px; display: flex; align-items: center; justify-content: center;
     gap: 6px; white-space: nowrap; cursor: pointer; position: relative; }
   button:hover:not(:disabled), button[aria-expanded="true"], button[aria-pressed="true"] { background: var(--hover); }
   button:disabled { opacity: .45; cursor: default; }
-  #menu { height: 26px; padding: 0 8px; font-weight: 600; }
+  #name { font-weight: 600; }
   .icon { width: 32px; height: 28px; font-size: 14px; }
   .badge { position: absolute; top: 0; right: -3px; background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; font-weight: 600; line-height: 14px; padding: 0 5px; }
   .badge.dot { top: 3px; right: 3px; width: 8px; height: 8px; padding: 0; background: var(--dot); } /* a result asked for, not seen yet */
@@ -33,7 +35,7 @@
 <body>
 <header>
   <img id="logo" alt="">
-  <button id="menu" aria-haspopup="menu" aria-expanded="false"><span data-i18n="strip.menu"></span> ▾</button>
+  <span id="name" data-i18n="strip.menu"></span>
   <span class="grow"></span>
   <span id="status"></span>
   <button id="drafts" class="icon" data-act="drafts" data-i18n-title="strip.draftsTip"></button>
@@ -45,10 +47,22 @@
   const $ = id => document.getElementById(id);
   $('logo').src = new URLSearchParams(location.search).get('icon');
   document.querySelectorAll('[data-act]').forEach(b => { b.setAttribute('aria-label', b.title); b.onclick = () => bridge.invoke('strip:act', b.dataset.act); });
-  $('menu').onclick = () => bridge.invoke('menu:open', $('menu').getBoundingClientRect().left);
+  // the width Windows' — ☐ ✕ take at the right end, for Teams' header and the panel's top to keep clear of them
+  // Measured once the window settles: while it is shown or resized the rect and innerWidth disagree for a moment (seen: -383, 657).
+  const wco = navigator.windowControlsOverlay;
+  let settle = 0;
+  const measure = () => {
+    clearTimeout(settle);
+    settle = setTimeout(() => { const r = wco.getTitlebarAreaRect(), w = innerWidth - (r.x + r.width); if (r.width && w > 0 && w < 400) bridge.invoke('strip:controls', w); }, 250);
+  };
+  if (wco) { wco.addEventListener('geometrychange', measure); addEventListener('resize', measure); measure(); }
   function show(s) {
     document.body.classList.toggle('inactive', !s.active);
-    $('menu').setAttribute('aria-expanded', String(s.menu));
+    // Teams' header is the title bar now: once this page is drawn without its drag area, the Teams page may cover it (src/main.ts onBar)
+    if (s.covered !== document.body.classList.contains('covered')) {
+      document.body.classList.toggle('covered', s.covered);
+      if (s.covered) requestAnimationFrame(() => requestAnimationFrame(() => bridge.invoke('strip:covered')));
+    }
     $('drafts').setAttribute('aria-pressed', String(s.panel)); // the panel is open
     $('settings').setAttribute('aria-pressed', String(s.settings)); // the settings are open: ⚙ again closes them
     // red: cards that wait on the user's click, counted; a dot: a result they asked for (src/badge.ts)

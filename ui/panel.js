@@ -12,7 +12,12 @@
     .pbadge { background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; line-height: 14px; padding: 0 5px; }
     .pbadge.dot { width: 8px; height: 8px; padding: 0; background: var(--accent); }
     .px { margin-left: auto; align-self: center; background: none; border: 0; color: var(--muted); font-size: 14px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-    .px:hover { color: var(--fg); }`;
+    .px:hover { color: var(--fg); }
+    /* at the window's top (ui/frame.js): the head is the title bar there — it moves the window, as high as Teams' header,
+       in the strip's colours (the caption buttons over its right end take them), clear of — ☐ ✕ */
+    .framed .ptabs { min-height: var(--frame-top); box-sizing: border-box; padding-right: calc(var(--frame-right) + 6px); app-region: drag; background: #ebebeb; }
+    .framed .ptab, .framed .px { app-region: no-drag; }
+    @media (prefers-color-scheme: dark) { .framed .ptabs { background: #1f1f1f; } }`;
   document.head.append(style);
   const here = document.body.dataset.tab;
   const tab = (name, label) => {

@@ -136,6 +136,7 @@ export function refreshTray() {
       ? recent.map(r => ({ label: `${new Date(r.at).toTimeString().slice(0, 5)}  ${r.title}`.slice(0, 80), click: r.click, enabled: !!r.click }))
       : [{ label: t('tray.none'), enabled: false }] },
     { label: t('tray.settings'), click: () => showSettings() },
+    { label: t('tray.reload'), click: () => ACTIONS.refresh() }, // F5 in the window; "Soroka ▾" had it before
     { type: 'separator' },
     { label: t('tray.state', { head, mode: doing }), enabled: false },
     { label: t('tray.quit'), click: () => app.quit() },
@@ -143,19 +144,65 @@ export function refreshTray() {
   pushStrip();
 }
 
-// ---------- the title bar (ui/strip.html): Soroka's menu for the chat in view, what the AI is doing, the answers, the settings ----------
-const STRIP = 32; // Windows' standard title bar
-// the Teams page and the settings sit under it: Windows draws — ☐ ✕ over its right end, in its colours (ui/strip.html --bg, --fg)
+// ---------- the title bar: Teams' own header with Soroka's ▤ ⚙ in it (teams.watchUi), or Soroka's strip (ui/strip.html) ----------
+// One bar: once Teams' header is found (bar), it is the window's title bar — the Teams page, the panel and the settings start at
+// the top, and Windows draws — ☐ ✕ over its right end in its colours. Without it (the sign-in page, Teams loading, an error,
+// a header Teams has changed) Soroka's strip, 32 px as Windows' own, is the title bar and the rest sits under it.
+const STRIP = 32;
+let bar: teams.Bar | null = null;
+let raised: teams.Bar | null = null; // the bar the Teams page is up to the top with (onBar)
+let controls = 138; // the width of Windows' — ☐ ✕ in DIP, as ui/strip.html measures it: 3 × 46 until then
+const top = () => (raised ? 0 : STRIP);
+// the top of the panel and the settings when they start at the top: a band that moves the window, clear of Windows' buttons
+const frame = () => ({ top: raised?.height ?? 0, right: raised ? controls : 0 });
+const sendFrame = () => { for (const v of [...Object.values(panelPages), settingsView]) v?.webContents.send('frame', frame()); };
 const below = (top: number) => { const [width, height] = teamsWin.getContentSize(); return { x: 0, y: top, width, height: height - top }; };
-const overlay = () => ({ height: STRIP, ...(nativeTheme.shouldUseDarkColors ? { color: '#1f1f1f', symbolColor: '#ffffff' } : { color: '#ebebeb', symbolColor: '#242424' }) });
-let chatInView = '';
-let menuView: WebContentsView | null = null, menuX = 0, menuClosedAt = 0; // "Soroka ▾", below
+// the caption buttons' colours follow what is under them: Teams' header, or the strip's colours (the strip, and the band of the
+// panel and the settings, which take the window's right end when open)
+const overlay = () => ({ height: raised?.height ?? STRIP, ...(raised && !panelTab && !settingsView ? { color: raised.bg, symbolColor: raised.fg }
+  : nativeTheme.shouldUseDarkColors ? { color: '#1f1f1f', symbolColor: '#ffffff' } : { color: '#ebebeb', symbolColor: '#242424' }) });
+let lastOverlay = '';
+function caption() {
+  const o = overlay(), json = JSON.stringify(o);
+  if (json !== lastOverlay) { lastOverlay = json; teamsWin.setTitleBarOverlay(o); }
+}
+// Teams' header found or gone (teams.watchUi; a page load starts without it).
+// Found: the strip drops its drag area first (stripState covered) and says so (strip:covered); only then the Teams page covers
+// it. A covered page is not drawn, its drag area is not updated, and Windows still asks it: the old one took every click on
+// Teams' header for a drag (seen live 2026-11-23). Gone: the Teams page moves down first, and the strip, in view, gets its own back.
+let coverTimer: NodeJS.Timeout | undefined;
+function raise() {
+  clearTimeout(coverTimer);
+  raised = bar;
+  layout();
+  sendFrame();
+}
+function onBar(b: teams.Bar | null) {
+  if (JSON.stringify(b) === JSON.stringify(bar)) return;
+  log(`teams bar: ${b ? `${b.height}px` : 'none'}`);
+  bar = b;
+  if (b && !raised) { clearTimeout(coverTimer); coverTimer = setTimeout(raise, 1000); } // the strip never answered: cover it anyway
+  else raise(); // gone, or new colours of the one up
+  pushStrip();
+}
+handle('strip:covered', () => { if (bar && !raised) raise(); });
+handle('frame:get', frame);
+handle('strip:controls', (_e, width: unknown) => {
+  const w = Math.round(Number(width));
+  if (!(w > 0 && w < 400) || w === controls) return;
+  controls = w;
+  log(`controls: ${controls}`);
+  pushPage();
+  sendFrame();
+});
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
 // when "Replies" was last on screen: a result asked for after that gets the purple dot (src/badge.ts)
 let panelSeenAt = Date.now();
 const badgeNow = () => badge(pending(), panelTab === 'drafts' ? Infinity : panelSeenAt);
-const stripState = () => ({ chat: chatInView, badge: badgeNow(), ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
-  note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab, settings: !!settingsView });
+// covered: Teams' header is the title bar — the strip, under the Teams page, must not keep its drag area: Windows asks the
+// window's own page too, and its header took every click on Teams' header for a drag (seen live 2026-11-23)
+const stripState = () => ({ badge: badgeNow(), busy: activity.at(-1) ?? '', note: status === 'ready' ? '' : t(`teams.${status}`),
+  active: teamsWin?.isFocused() ?? true, panel: !!panelTab, settings: !!settingsView, covered: !!bar });
 const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); pushPage(); };
 // Soroka's buttons in the Teams page (teams.watchUi): their state goes in whenever it changes
 const running = new Set<teams.UiAct>(); // the buttons' actions going on: a second click (or hotkey) starts nothing
@@ -166,7 +213,10 @@ function once(name: teams.UiAct, fn: () => Promise<unknown>) {
 }
 const pageUi = (): teams.PageUi => ({ chips: { suggest: t('strip.suggest'), improve: t('strip.improve'), summary: t('strip.summary'),
   tips: { suggest: t('strip.suggestTip'), improve: t('strip.improveTip'), summary: t('strip.summaryTip') }, empty: t('strip.improveEmpty'),
-  ai: !settings.aiOff && aiReady(), running: [...running] } }); // no AI (turned off, or none ready): only the summary, without AI
+  ai: !settings.aiOff && aiReady(), running: [...running] }, // no AI (turned off, or none ready): only the summary, without AI
+  bar: { badge: badgeNow(), busy: activity.at(-1) ?? '', panel: !!panelTab, settings: !!settingsView,
+    controls: panelTab ? 0 : controls, // the panel takes the window's right end: Windows' buttons are over it, not over Teams
+    tips: { drafts: t('strip.draftsTip'), settings: t('strip.settingsTip') } } });
 let lastUi = ''; // what the page has: '' after a load, when its watcher is new
 function pushPage() {
   const json = JSON.stringify(pageUi());
@@ -195,45 +245,6 @@ function hotkey(e: Electron.Event, i: Electron.Input) {
 }
 handle('strip:get', stripState);
 handle('strip:act', (_e, name: string) => { teamsPage.focus(); ACTIONS[name]?.(); });
-
-// "Soroka ▾": the actions for the chat in view. A layer over the window, like the settings: the window stays active and the menu
-// takes the keyboard. A pick, Esc or a click anywhere else closes it.
-const keyOf = (act: string) => Object.keys(HOTKEYS).find(k => HOTKEYS[k] === act)?.replace('Key', '') ?? '';
-function menuItems() {
-  const s = stripState(), noAi = !s.ready || !s.ai, tip = (key: string) => (s.ai ? t(key) : t('ai.needed'));
-  return { chat: s.chat, items: [
-    ...(s.aiOff ? [] : [ // "Do not use AI": the summary stays, without AI
-      { act: 'suggest', label: t('strip.suggest'), off: noAi, tip: tip('strip.suggestTip') },
-      { act: 'improve', label: t('strip.improve'), off: noAi, tip: tip('strip.improveTip') }]),
-    { act: 'summary', label: t('strip.summary'), off: !s.ready, tip: t('strip.summaryTip') }, // without AI it makes the plain one
-    { act: 'refresh', label: t('strip.refresh'), tip: t('strip.refreshTip'), line: true },
-  ].map(i => ({ ...i, key: keyOf(i.act) })) };
-}
-function closeMenu() {
-  const view = menuView;
-  if (!view) return;
-  menuView = null; menuClosedAt = Date.now();
-  teamsWin.contentView.removeChildView(view);
-  view.webContents.close();
-  pushStrip();
-}
-handle('menu:open', (_e, x: number) => {
-  if (menuView) return closeMenu();
-  if (Date.now() - menuClosedAt < 300) return; // this very click took the focus from the menu and closed it: it meant "close"
-  const view = menuView = new WebContentsView({ webPreferences: { preload } });
-  menuX = Math.max(0, Math.round(x) - 8); // the page's margin round the card, for its shadow
-  view.setBackgroundColor('#00000000');
-  view.setBounds({ x: menuX, y: STRIP, width: 0, height: 0 }); // sized once the page has measured itself
-  view.webContents.on('blur', closeMenu);
-  view.webContents.loadFile(ui('menu.html'), { query: { m: JSON.stringify(menuItems()) } });
-  teamsWin.contentView.addChildView(view);
-  pushStrip();
-});
-handle('menu:size', (_e, width: number, height: number) => {
-  menuView?.setBounds({ x: menuX, y: STRIP, width: Math.ceil(width), height: Math.ceil(height) });
-  menuView?.webContents.focus();
-});
-handle('menu:act', (_e, name: string) => { closeMenu(); closeSettings(); teamsPage.focus(); ACTIONS[name]?.(); }); // '' = Esc
 
 // a card left with the reply field open and nothing typed for a while: what is typed waits in "Replies", the next cards come.
 // "Replies" keeps what the user types there too; a field they emptied gives the card back to the app's text.
@@ -273,7 +284,7 @@ function createTeamsWindow() {
     webPreferences: { preload } });
   teamsWin.removeMenu();
   teamsWin.loadFile(ui('strip.html'), { query: { icon: APP_ICON_URL } });
-  nativeTheme.on('updated', () => teamsWin.setTitleBarOverlay(overlay()));
+  nativeTheme.on('updated', caption);
   teamsWin.on('focus', pushStrip);
   teamsWin.on('blur', pushStrip); // the title bar fades
   teamsWin.on('resize', layout);
@@ -282,7 +293,6 @@ function createTeamsWindow() {
   teamsWin.on('session-end', flushSession); // Windows signs out or shuts down: no before-quit comes
   // hidden on the user's chat, new messages there would be read silently: park on the self-chat right away
   teamsWin.on('hide', () => {
-    closeMenu();
     closeSettings();
     if (status === 'ready') serial(async () => {
       leftChat = await teams.leftOff().catch(() => undefined); // to come back to when the window opens
@@ -294,10 +304,11 @@ function createTeamsWindow() {
 export let teamsView: WebContentsView;
 const PANEL = 360;
 const layout = () => {
-  const r = below(STRIP), side = panelTab && panelPages[panelTab];
+  const r = below(top()), side = panelTab && panelPages[panelTab];
   teamsView.setBounds(side ? { ...r, width: r.width - PANEL } : r);
   side?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
   settingsView?.setBounds(r);
+  caption();
 };
 // The setting hides the button of Teams' Office menu in the main Teams page; the key takes the rule back.
 let officeMenuKey: string | undefined;
@@ -313,20 +324,16 @@ export function newTeamsPage() {
   layout();
   const main = () => page === teamsPage; // the page gone to a call window keeps these handlers: they must not act for it
   page.on('before-input-event', (e, i) => { if (main()) hotkey(e, i); });
-  // "(2) Чат | POS team | Microsoft Teams": the middle part is the chat in view (by position, not by words)
-  page.on('page-title-updated', (_e, title) => {
-    if (!main()) return;
-    const parts = title.replace(/^\(\d+\)\s*/, '').split(' | ');
-    chatInView = parts.length > 2 ? parts.slice(1, -1).join(' | ') : '';
-    pushStrip();
-  });
   // its window.open: openWindow, set for every page (web-contents-created)
   // a page load drops the watcher: our loads go through connect(), this covers Teams reloading itself
   page.on('did-finish-load', () => { if (status === 'ready' && main()) void watch(); });
-  // Teams marks its header as a window drag area (app-region), for its own desktop app. In this frameless window Windows
-  // took a click there for the start of a drag: the app launcher and the search box got none. The window drags by the strip.
+  // a new document (a load, F5, the sign-in page) has no header until its watcher finds one: Soroka's strip meanwhile
+  page.on('did-start-navigation', e => { if (e.isMainFrame && !e.isSameDocument && main()) onBar(null); });
+  // Nothing in the Teams page drags the window but the header watchUi found ([data-tb-bar] in teams.UI_CSS: its empty space).
+  // No rule for the rest: Teams sets no app-region of its own (none in its style sheets, checked live 2026-11-23), and an
+  // explicit no-drag on every box — the rule here before — cut the drag area under the header wherever a box ran under it
+  // (the message list scrolled up does; any value but drag is no-drag, "none" too).
   page.on('dom-ready', () => {
-    void page.insertCSS('*{app-region:no-drag!important}', { cssOrigin: 'user' });
     if (main()) { officeMenuKey = undefined; void applyOfficeMenu(); void page.insertCSS(teams.UI_CSS, { cssOrigin: 'user' }); } // a new document has none of the old rules
   });
   teams.attach(page);
@@ -339,7 +346,7 @@ const watch = () => Promise.all([
   teams.watchCall(onCall),
   teams.watchSignIn(onSignIn),
   jiraLinks(),
-  teams.watchUi(APP_ICON_URL, act => ACTIONS[act]()).then(() => { lastUi = ''; pushPage(); }),
+  teams.watchUi(APP_ICON_URL, act => ACTIONS[act](), onBar).then(() => { lastUi = ''; pushPage(); }),
 ]).catch(e => log('watch:', errorText(e)));
 
 // The picture of "nothing open" (teams.pickHint): a magpie on a branch types (the dots bubble comes from its beak) while a message
@@ -616,8 +623,8 @@ export function showSettings(welcome = false) {
   showTeams(); // closes one open already: it comes back fresh, at the top
   settingsView = new WebContentsView({ webPreferences: { preload } });
   settingsView.webContents.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
-  settingsView.setBounds(below(STRIP));
   teamsWin.contentView.addChildView(settingsView);
+  layout(); // its bounds, and the caption buttons in its colours
   settingsView.webContents.focus();
   pushStrip(); // ⚙ shows pressed
 }
@@ -626,6 +633,7 @@ export function closeSettings() {
   if (!view) return;
   settingsView = null;
   teamsWin.contentView.removeChildView(view);
+  layout();
   teamsPage.focus();
   pushStrip();
   // a text field saves when it loses focus: let the one being typed in save, then close the page

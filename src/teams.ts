@@ -71,6 +71,7 @@ export const selfCheck = (): Promise<Record<string, boolean | null>> => run(() =
     compose: chatOpen ? has('[id^="new-message-"]') : null,
     chips: chatOpen && has('[id^="chat-header-"]') ? has('[data-tb-chips]') : null, // Soroka's buttons above the box (watchUi)
     menu: has('[data-tid="more-options-header"]'),
+    bar: has('[data-tb-group]'), // Soroka's ▤ ⚙ in Teams' header (watchUi)
   };
 });
 
@@ -208,11 +209,19 @@ const OUT = `:not(${MSG} *)`;
 // The row goes in Teams' compose footer, right before the card that holds the box (seen live 2026-11-23: the footer's
 // children are a gutter for "typing…", the box's card, a 16 px line under it). A chat, not a channel: its header
 // [id^="chat-header-"] is there. The colours are Teams' own Fluent tokens, so they follow Teams' theme, not Windows'.
+// And one title bar: Teams' own header ([data-tid="title-bar"], 48 px, seen live 2026-11-23: a flex row; "···" and the avatar
+// in its titlebar-end-slot) moves the window, Soroka's ▤ and ⚙ stand before its "···", Soroka's icon at its left end,
+// and Windows' — ☐ ✕ are drawn over its right end (a padding keeps Teams' own buttons clear of them).
 export type UiAct = 'suggest' | 'improve' | 'summary' | 'drafts' | 'settings';
 const UI_ACTS: string[] = ['suggest', 'improve', 'summary', 'drafts', 'settings'] satisfies UiAct[];
 // labels: "✨ Suggest reply" — the first word is the icon; ai: the AI ones are shown; running: a spinner, clicks wait
 export type Chips = { suggest: string; improve: string; summary: string; tips: Record<'suggest' | 'improve' | 'summary', string>; empty: string; ai: boolean; running: UiAct[] };
-export type PageUi = { chips: Chips };
+// badge: the mark on ▤ (src/badge.ts); busy: what Soroka does now (a spinner, the text in ▤'s tooltip); panel, settings: open;
+// controls: the width Windows' buttons take over the header's right end, in px
+export type BarUi = { badge: { red: number; dot: boolean }; busy: string; panel: boolean; settings: boolean; controls: number; tips: { drafts: string; settings: string } };
+export type PageUi = { chips: Chips; bar: BarUi };
+// Teams' header as found: its height and colours (#rrggbb) for the window's caption buttons
+export type Bar = { height: number; bg: string; fg: string };
 // A user style sheet (insertCSS) loses to Teams' own rules unless !important: every rule here is. Its colours do not turn
 // a button's native look off as an author's would (seen live): appearance: none does.
 export const UI_CSS = `
@@ -226,14 +235,91 @@ export const UI_CSS = `
 .tb-spin { width: 10px !important; height: 10px !important; border-radius: 50% !important; box-sizing: border-box !important;
   border: 2px solid color-mix(in srgb, currentColor 25%, transparent) !important; border-top-color: currentColor !important; animation: tb-spin .8s linear infinite !important; }
 @keyframes tb-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .tb-spin { animation-duration: 3s !important; } }`;
-const ACT = 'tbAct';
-export async function watchUi(icon: string, onAct: (act: UiAct) => void) {
+@media (prefers-reduced-motion: reduce) { .tb-spin { animation-duration: 3s !important; } }
+[data-tb-bar], [data-tb-bar] * { app-region: drag !important; }
+[data-tb-bar] :is(button, a, input, textarea, select, [role="button"], [role="search"], [role="combobox"], [role="menuitem"], [role="tab"], [contenteditable="true"]),
+[data-tb-bar] :is(button, a, input, textarea, select, [role="button"], [role="search"], [role="combobox"], [role="menuitem"], [role="tab"], [contenteditable="true"]) * { app-region: no-drag !important; }
+[data-tb-bar] { padding-right: calc(var(--tb-controls, 0px) + 8px) !important; box-sizing: border-box !important; }
+[data-tb-logo] { width: 18px !important; height: 18px !important; margin: 0 4px 0 14px !important; align-self: center !important; flex: none !important; }
+[data-tb-group] { display: flex !important; align-items: center !important; gap: 2px !important; padding: 0 4px !important; height: 32px !important; margin-right: 4px !important;
+  border-radius: 6px !important; background: var(--colorBrandBackground2, #e2e3f7) !important; }
+.tb-btn { appearance: none !important; position: relative !important; width: 32px !important; height: 28px !important; padding: 0 !important; margin: 0 !important; border: 0 !important;
+  border-radius: 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; cursor: pointer !important; font: inherit !important;
+  font-size: 15px !important; background: transparent !important; color: var(--colorBrandForeground1, #4f52b2) !important; }
+.tb-btn:hover, .tb-btn[aria-pressed="true"] { background: var(--colorBrandBackground2Hover, rgba(0,0,0,.07)) !important; }
+.tb-btn .tb-badge { position: absolute !important; top: 0 !important; right: -3px !important; background: #c4314b !important; color: #fff !important; border-radius: 9px !important;
+  font-size: 10px !important; font-weight: 600 !important; line-height: 14px !important; padding: 0 5px !important; }
+.tb-btn .tb-dot { position: absolute !important; top: 3px !important; right: 3px !important; width: 8px !important; height: 8px !important; border-radius: 50% !important;
+  background: var(--colorBrandForeground1, #5b5fc7) !important; }
+.tb-btn .tb-spin { position: absolute !important; top: 2px !important; right: 2px !important; width: 9px !important; height: 9px !important; }`;
+const ACT = 'tbAct', BAR = 'tbBar';
+export async function watchUi(icon: string, onAct: (act: UiAct) => void, onBar: (bar: Bar | null) => void) {
   await bind(ACT, payload => { if (UI_ACTS.includes(payload)) onAct(payload as UiAct); });
-  await run(([name, box, icon]) => {
+  await bind(BAR, payload => {
+    if (!payload) return onBar(null);
+    const b = JSON.parse(payload), color = (c: unknown) => (/^#[0-9a-f]{6}$/.test(String(c)) ? String(c) : '#ebebeb');
+    onBar({ height: Math.min(64, Math.max(24, Math.round(Number(b.height)) || 48)), bg: color(b.bg), fg: color(b.fg) });
+  });
+  await run(([name, barName, box, icon]) => {
     const w = window as any;
     w.__tbUiWatch?.disconnect();
+    clearTimeout(w.__tbBarLost);
+    w.__tbBarSent = undefined; // a new watcher: the app hears where things are again
+    const tell = (geo: string) => { clearTimeout(w.__tbBarLost); if (geo !== w.__tbBarSent) { w.__tbBarSent = geo; w[barName]?.(geo); } };
+    const hex = (c: string) => '#' + (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(n => Math.round(Number(n)).toString(16).padStart(2, '0')).join('');
+    // the header's own background, or the first one behind it that is not transparent
+    const bgOf = (e: Element | null) => {
+      for (; e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor, a = c.match(/[\d.]+/g) ?? []; if (a.length && (a.length < 4 || Number(a[3]) > 0)) return c; }
+      return 'rgb(235, 235, 235)';
+    };
+    const bar = () => {
+      const ui = w.__tbUi, head = document.querySelector('[data-tid="title-bar"]'), more = head?.querySelector('#more-options-header')?.parentElement;
+      // the icon in Teams' start slot (its menu button): one more item in the header itself would shift its space-between layout
+      const start = head?.querySelector('[data-tid="titlebar-start-slot"]') ?? head;
+      const ok = !!ui && !!head && !!more;
+      for (const e of document.querySelectorAll('[data-tb-bar]')) if (!ok || e !== head) e.removeAttribute('data-tb-bar');
+      for (const e of document.querySelectorAll('[data-tb-logo]')) if (!ok || e.parentElement !== start) e.remove();
+      for (const e of document.querySelectorAll('[data-tb-group]')) if (!ok || e.nextElementSibling !== more) e.remove();
+      if (!ok) { // gone for a second, not for a frame of Teams' re-render: then Soroka's own strip comes back
+        if (w.__tbBarSent && !w.__tbBarLost) w.__tbBarLost = window.setTimeout(() => { w.__tbBarLost = 0; if (!document.querySelector('[data-tb-bar]')) tell(''); }, 1000);
+        return;
+      }
+      head!.setAttribute('data-tb-bar', '');
+      document.documentElement.style.setProperty('--tb-controls', `${ui.bar.controls}px`);
+      if (!start!.querySelector(':scope > [data-tb-logo]')) {
+        const logo = document.createElement('img');
+        logo.src = icon; logo.alt = ''; logo.setAttribute('data-tb-logo', '');
+        start!.prepend(logo);
+      }
+      let group = more!.previousElementSibling as HTMLElement | null;
+      if (!group?.hasAttribute('data-tb-group')) {
+        group = document.createElement('span');
+        group.setAttribute('data-tb-group', '');
+        group.addEventListener('click', e => { const b = (e.target as Element).closest('button'); if (b) w[name]?.(b.dataset.tbAct); });
+        more!.before(group);
+      }
+      const b = ui.bar, key = JSON.stringify(b);
+      if ((group as any).__tbKey !== key) {
+        (group as any).__tbKey = key;
+        const button = (act: string, glyph: string, tip: string, pressed: boolean, ...marks: Element[]) => {
+          const e = document.createElement('button');
+          e.type = 'button'; e.className = 'tb-btn'; e.dataset.tbAct = act; e.title = tip;
+          e.setAttribute('aria-label', tip); e.setAttribute('aria-pressed', String(pressed));
+          e.append(glyph, ...marks);
+          return e;
+        };
+        // red wins; then the spinner while Soroka works; then the dot of a result asked for
+        const mark = document.createElement('span');
+        if (b.badge.red) { mark.className = 'tb-badge'; mark.textContent = b.badge.red > 9 ? '9+' : String(b.badge.red); }
+        else mark.className = b.busy ? 'tb-spin' : 'tb-dot';
+        group.replaceChildren(button('drafts', '▤', b.busy || b.tips.drafts, b.panel, ...(b.badge.red || b.busy || b.badge.dot ? [mark] : [])),
+          button('settings', '⚙', b.tips.settings, b.settings));
+      }
+      const bg = bgOf(head!), [r, g, bl] = (bg.match(/[\d.]+/g) ?? []).map(Number);
+      tell(JSON.stringify({ height: Math.round(head!.getBoundingClientRect().height), bg: hex(bg), fg: r + g + bl < 384 ? '#ffffff' : '#242424' }));
+    };
     const render = () => {
+      bar();
       const ui = w.__tbUi, input = document.querySelector(box) as HTMLElement | null;
       const card = input?.closest('[data-tid="chat-pane-compose-message-footer"] > *');
       const here = !!ui && !!card && !!document.querySelector('[id^="chat-header-"]');
@@ -275,9 +361,10 @@ export async function watchUi(icon: string, onAct: (act: UiAct) => void) {
     w.__tbUiWatch = new MutationObserver(() => { // Teams changes the page constantly: at most three times a second
       if (!timer) timer = window.setTimeout(() => { timer = 0; render(); }, 300);
     });
-    w.__tbUiWatch.observe(document.body, { subtree: true, childList: true, characterData: true });
+    // class and style: a change of Teams' theme recolours its header
+    w.__tbUiWatch.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style'] });
     render();
-  }, [ACT, BOX, icon]);
+  }, [ACT, BAR, BOX, icon]);
 }
 // The app's state for its buttons in the page: what they say, which are on, what runs
 export const showUi = (ui: PageUi): Promise<void> => run(ui => { (window as any).__tbUi = ui; (window as any).__tbRender?.(); }, ui);
