@@ -202,12 +202,15 @@ const MSG = '[data-tid="chat-pane-message"]';
 const OUT = `:not(${MSG} *)`;
 
 // ---------- calls: an incoming call, or a meeting that started, as Teams shows it in its page ----------
-// Teams' toast for them has a decline button with a fixed id (reject-call-button / reject-meeting-button); the toast's
-// other buttons (accept with video or audio, join) are taken as they are, with Teams' own labels, and numbered for ringClick.
-// title/message: the toast's text lines that are not button labels (the caller first). outline: its data-tid ids, for the log.
+// Teams' toast for them, at the bottom right, marks its parts with data-testid (its notifications app, read in its bundle):
+// a call is calling-notification (or its compact layout), its round buttons in calling-actions, labelled by aria-label only;
+// a started meeting is meeting-notification, its buttons in msn-actions, and the toast's ✕ (dismiss-toast-button) declines it.
+// (reject-call-button / reject-meeting-button, looked for before, belong to a meeting room console: a web Teams never shows them.)
+// The buttons are taken as they are, with Teams' own labels, and numbered for ringClick.
+// title/message: the toast's text lines that are not button labels (the caller first). outline: its data-testid ids, for the log.
 export type Ring = { kind: 'call' | 'meeting'; title: string; message: string; buttons: { label: string; reject: boolean }[]; outline: string };
 const RING = 'tbRing';
-const REJECT = `[data-tid="reject-call-button"]${OUT}, [data-tid="reject-meeting-button"]${OUT}`;
+const TOAST = ['calling-notification', 'calling-notification-compact-layout', 'meeting-notification'].map(id => `[data-testid="${id}"]${OUT}`).join(', ');
 export async function watchRings(onChange: (ring: Ring | null) => void) {
   await bind(RING, payload => {
     const r = payload ? JSON.parse(payload) : null;
@@ -215,12 +218,13 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
     if (Array.isArray(r.buttons)) onChange({ kind: r.kind === 'call' ? 'call' : 'meeting', title: String(r.title ?? ''), message: String(r.message ?? ''),
       buttons: r.buttons.map((b: { label?: unknown; reject?: unknown }) => ({ label: String(b?.label ?? ''), reject: b?.reject === true })), outline: String(r.outline ?? '') });
   });
-  await run(([name, rejectSel]) => {
+  await run(([name, toastSel]) => {
     const w = window as any;
     w.__tbRing?.disconnect();
     const read = () => {
-      const reject = document.querySelector(rejectSel) as HTMLElement | null;
-      if (!reject?.getClientRects().length) return '';
+      const toast = document.querySelector(toastSel) as HTMLElement | null;
+      if (!toast?.getClientRects().length) return '';
+      const kind = toast.getAttribute('data-testid') === 'meeting-notification' ? 'meeting' : 'call';
       // the text of an element outside its buttons, a line per text node (the caller's name, "Video call")
       const texts = (e: Element) => {
         const out: string[] = [];
@@ -228,16 +232,19 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
         for (let n = walk.nextNode(); n; n = walk.nextNode()) if (!n.parentElement?.closest('button') && n.textContent!.trim()) out.push(n.textContent!.trim());
         return out;
       };
-      let box = reject.parentElement; // the toast: the nearest ancestor with other buttons and some text of its own
-      for (let up = 0; box && up < 6 && (box.querySelectorAll('button').length < 2 || !texts(box).length); up++) box = box.parentElement;
-      let buttons = [...(box?.querySelectorAll('button') ?? [])].filter(b => b.getClientRects().length) as HTMLElement[];
-      if (!box || buttons.length > 8) { box = reject.parentElement!; buttons = [reject]; } // climbed past the toast
-      buttons.forEach((b, i) => b.setAttribute('data-tb-ring', String(i)));
+      const seen = (b: Element | null | undefined) => !!b?.getClientRects().length;
+      const buttons = [...toast.querySelectorAll('[data-testid="calling-actions"] button, [data-testid="msn-actions"] button')].filter(seen) as HTMLElement[];
       const labels = buttons.map(b => (b.getAttribute('aria-label') || b.innerText || '').trim());
-      const lines = texts(box);
-      return JSON.stringify({ kind: reject.getAttribute('data-tid') === 'reject-call-button' ? 'call' : 'meeting', title: lines[0] || '',
-        message: lines.slice(1, 3).join(' · '), buttons: buttons.map((b, i) => ({ label: labels[i], reject: b === reject })),
-        outline: [...box.querySelectorAll('[data-tid]')].map(e => e.getAttribute('data-tid')).join(' ') });
+      // a call's decline button is told only by its label, in the uk/ru/en Teams the app keeps ("Відхилити виклик", "Отклонить звонок", "Decline call");
+      // a meeting has none in the toast: its ✕ closes the toast, which is how Teams declines it
+      let reject = buttons.findIndex((_b, i) => /^(відхилити|отклонить|decline)/i.test(labels[i]));
+      const close = toast.closest('[data-testid="notification-wrapper"]')?.querySelector('[data-testid="dismiss-toast-button"]') as HTMLElement | null;
+      if (kind === 'meeting' && seen(close)) { reject = buttons.push(close!) - 1; labels.push((close!.getAttribute('aria-label') || '').trim()); }
+      buttons.forEach((b, i) => b.setAttribute('data-tb-ring', String(i)));
+      const lines = texts(toast);
+      return JSON.stringify({ kind, title: lines[0] || '', message: lines.slice(1, 3).join(' · '),
+        buttons: buttons.map((_b, i) => ({ label: labels[i], reject: i === reject })),
+        outline: [toast, ...toast.querySelectorAll('[data-testid]')].map(e => e.getAttribute('data-testid')).join(' ') });
     };
     let last = read(), timer = 0;
     if (last) w[name]?.(last);
@@ -246,7 +253,7 @@ export async function watchRings(onChange: (ring: Ring | null) => void) {
       timer = window.setTimeout(() => { timer = 0; const now = read(); if (now !== last) { last = now; w[name]?.(now); } }, 300);
     });
     w.__tbRing.observe(document.body, { subtree: true, childList: true });
-  }, [RING, REJECT]);
+  }, [RING, TOAST]);
 }
 // A button of the ringing toast, by its number in Ring.buttons: a real click, so the veil of a summary reading goes first.
 export async function ringClick(i: number) {
