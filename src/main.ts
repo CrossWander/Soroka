@@ -14,6 +14,7 @@ import { t } from './i18n';
 import * as i18n from './i18n';
 import { data, file, ui, ownPage, log, writeJson, errorText, handle, logged, OPTIONS, firstRun, state, saveState, waiting, pending, serial, settings, type Settings, type Draft, type Msg } from './base';
 import { aiSkipped, skippedAuthor, notToAi, forAi, hhmm, quiet, setDnd, keywordHit, called, groupWide, wanted, authorOf, named, listed, skipDraft } from './filters';
+import { badge } from './badge';
 import { signInAsked, onSignIn, signIn } from './signin';
 import { jiraLinks, jiraBrief } from './jira';
 import { startApi } from './api';
@@ -150,7 +151,10 @@ const overlay = () => ({ height: STRIP, ...(nativeTheme.shouldUseDarkColors ? { 
 let chatInView = '';
 let menuView: WebContentsView | null = null, menuX = 0, menuClosedAt = 0; // "Soroka ▾", below
 const activity: string[] = []; // a list, not a set: two runs with the same label each have their own entry
-const stripState = () => ({ chat: chatInView, pending: pending().length, ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
+// when "Replies" was last on screen: a result asked for after that gets the purple dot (src/badge.ts)
+let panelSeenAt = Date.now();
+const badgeNow = () => badge(pending(), panelTab === 'drafts' ? Infinity : panelSeenAt);
+const stripState = () => ({ chat: chatInView, badge: badgeNow(), ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
   note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab, settings: !!settingsView });
 const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); };
 export async function working<T>(what: string, fn: () => Promise<T>) {
@@ -551,6 +555,7 @@ export function openPanel(tab: Tab) {
     page.webContents.on('before-input-event', hotkey);
   }
   const shown = panelTab && panelPages[panelTab];
+  if (panelTab === 'drafts' && tab !== 'drafts') panelSeenAt = Date.now();
   if (shown !== page) {
     if (shown) teamsWin.contentView.removeChildView(shown);
     teamsWin.contentView.addChildView(page, 1); // above Teams, under the settings and the menu
@@ -562,6 +567,7 @@ export function openPanel(tab: Tab) {
 }
 function closePanel() {
   if (!panelTab) return;
+  if (panelTab === 'drafts') panelSeenAt = Date.now();
   teamsWin.contentView.removeChildView(panelPages[panelTab]!);
   for (const tab of Object.keys(panelPages) as Tab[]) {
     const page = panelPages[tab]!.webContents;
@@ -619,7 +625,7 @@ function suggest(n: string, { hint = '', auto = false } = {}): Promise<void> {
   if (d?.status !== 'pending') return Promise.resolve();
   const going = suggesting.get(n);
   if (going) return hint ? going.then(() => suggest(n, { hint, auto })) : going; // what the user asked for comes after the run going on
-  d.busy = true; delete d.error; draftsChanged();
+  d.busy = true; delete d.error; delete d.failed; draftsChanged(); // a send's error leaves the card, and its red mark with it
   const run = (async () => {
     let stale = false; // a newer message came while the AI wrote: these answered the one before
     try {
@@ -632,7 +638,11 @@ function suggest(n: string, { hint = '', auto = false } = {}): Promise<void> {
         if (!d.text || hint) { d.text = made[0] ?? ''; d.kept = false; } // the user's own text stays, unless they asked anew
       });
     } catch (e) { d.error = errorText(e); log('suggest:', d.error); }
-    finally { d.busy = false; suggesting.delete(n); draftsChanged(); }
+    finally {
+      d.busy = false; suggesting.delete(n);
+      if (!auto) d.ready = Date.now(); // the user asked (✨, "Improve", "Nudge"); drafts mode's own runs are auto
+      draftsChanged();
+    }
     if (stale) await suggest(n, { hint, auto }); // the newest message gets its own
   })();
   suggesting.set(n, run);
@@ -730,6 +740,7 @@ function snooze(n: string, minutes: number) {
   if (morning.getHours() >= 5) morning.setDate(morning.getDate() + 1);
   morning.setHours(9, 0, 0, 0);
   d.remindAt = minutes < 0 ? morning.getTime() : Date.now() + minutes * 60_000;
+  delete d.back; // put off again: it waits for its time, not for the user's click
   draftsChanged();
 }
 // Snoozed cards whose time came, and messages still without an answer after the time set in the settings.
@@ -742,9 +753,9 @@ function remind() {
   else if (hushed.length) toast({ title: t('toast.hushed', { n: hushed.length }), message: [...new Set(hushed.map(([, d]) => d.title))].join(', '), tone: 'accent', long: true, click: () => showDrafts(true) });
   if (hushed.length) saveState();
   for (const [n, d] of waiting()) {
-    if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; d.reminded = true; draftsChanged(); announce(n, t('toast.snoozed')); continue; } // not "awaiting" right after
+    if (d.remindAt && d.remindAt <= Date.now()) { delete d.remindAt; d.reminded = d.back = true; draftsChanged(); announce(n, t('toast.snoozed')); continue; } // not "awaiting" right after
     if (d.kind === 'incoming' && !d.reminded && !d.remindAt && settings.remindAfter && Date.now() - d.at >= Number(settings.remindAfter) * 60_000) {
-      d.reminded = true; saveState(); announce(n, t('toast.awaiting'));
+      d.reminded = d.back = true; draftsChanged(); announce(n, t('toast.awaiting')); // draftsChanged: the red count on ▤
     }
   }
   const held = waiting().filter(([, d]) => d.held); // the round-up: an hour after the oldest one held back, all of them in one card
@@ -977,7 +988,7 @@ async function sendDraft(n: string, text: string, quote = false) {
     // the user's own words wait in this app's Teams window, not the Teams app they look at: the window opens on them
     const taken = !!(e as { boxTaken?: boolean }).boxTaken, err = taken ? new Error(t('err.boxTaken')) : e;
     if (taken) openInTeams(d.chatId);
-    d.error = errorText(err);
+    d.error = errorText(err); d.failed = true;
     toast({ title: t('toast.notSent'), message: `${d.title}: ${d.error}`, tone: 'error', long: true, click: () => showDrafts(true) });
     throw err;
   } finally { sending.delete(n); draftsChanged(); }
@@ -1002,6 +1013,7 @@ handle('notify:test', () => toast({ title: t('toast.test'), message: t('toast.te
 handle('teams:show', () => showTeams());
 handle('style:learn', logged('learn style', () => learnStyle()));
 handle('drafts:get', () => pending());
+handle('drafts:badge', () => badgeNow());
 // A card stays up while the user is at it, and its chat may be read meanwhile elsewhere (the phone, the Teams window):
 // "read" only closes a card nobody asked anything of. Asked on the card after all, the message waits for its answer again.
 const askedOnCard = (n: unknown) => { const k = String(n), d = state.drafts[k]; if (d?.status === 'read') d.status = 'pending'; return k; };

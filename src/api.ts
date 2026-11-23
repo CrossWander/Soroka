@@ -94,7 +94,7 @@ export function startApi() {
         const { chat, text, note } = await body(req);
         need(typeof chat === 'string' && typeof text === 'string' && text.trim(), 'chat and text');
         const c = await serial(() => teams.findChat(chat));
-        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, kind: 'request', preview: c.preview });
+        const n = addDraft({ chatId: c.id, title: c.title, note: typeof note === 'string' && note.trim() ? note : c.title, last: '', text, kind: 'request', preview: c.preview, from: 'ai' });
         toast({ title: t('toast.claudeSuggests'), message: `${c.title}: ${text}`, tone: 'accent', long: true, click: () => showDrafts(true) });
         return json(res, 200, { draft: n });
       }

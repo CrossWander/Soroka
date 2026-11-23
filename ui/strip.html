@@ -22,6 +22,7 @@
   #menu { height: 26px; padding: 0 8px; font-weight: 600; }
   .icon { width: 32px; height: 28px; font-size: 14px; }
   .badge { position: absolute; top: 0; right: -3px; background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; font-weight: 600; line-height: 14px; padding: 0 5px; }
+  .badge.dot { top: 3px; right: 3px; width: 8px; height: 8px; padding: 0; background: var(--dot); } /* a result asked for, not seen yet */
   .grow { flex: 1; }
   #status { color: var(--muted); font-size: 12px; margin-right: 6px; padding-left: 4px; display: flex; /* padding: room for the dot's halo */ align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; min-width: 0; }
   #status.busy::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--dot) 25%, transparent); border-top-color: var(--dot); animation: spin .8s linear infinite; }
@@ -50,9 +51,10 @@
     $('menu').setAttribute('aria-expanded', String(s.menu));
     $('drafts').setAttribute('aria-pressed', String(s.panel)); // the panel is open
     $('settings').setAttribute('aria-pressed', String(s.settings)); // the settings are open: ⚙ again closes them
-    const badge = document.createElement('span');
-    badge.className = 'badge'; badge.textContent = s.pending > 9 ? '9+' : s.pending;
-    $('drafts').replaceChildren('▤', ...(s.pending ? [badge] : []));
+    // red: cards that wait on the user's click, counted; a dot: a result they asked for (src/badge.ts)
+    const badge = document.createElement('span'), { red, dot } = s.badge;
+    badge.className = red ? 'badge' : 'badge dot'; badge.textContent = red ? (red > 9 ? '9+' : red) : '';
+    $('drafts').replaceChildren('▤', ...(red || dot ? [badge] : []));
     $('status').textContent = $('status').title = s.busy || s.note;
     $('status').className = s.busy ? 'busy' : '';
   }

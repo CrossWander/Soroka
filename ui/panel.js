@@ -10,6 +10,7 @@
     .ptab:hover, .ptab[aria-selected="true"] { color: var(--fg); }
     .ptab[aria-selected="true"] { border-bottom-color: var(--accent); }
     .pbadge { background: #c4314b; color: #fff; border-radius: 9px; font-size: 10px; line-height: 14px; padding: 0 5px; }
+    .pbadge.dot { width: 8px; height: 8px; padding: 0; background: var(--accent); }
     .px { margin-left: auto; align-self: center; background: none; border: 0; color: var(--muted); font-size: 14px; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
     .px:hover { color: var(--fg); }`;
   document.head.append(style);
@@ -29,7 +30,11 @@
   head.setAttribute('role', 'tablist');
   head.append(replies, tab('summary', t('summary.tab')), close);
   document.body.prepend(head);
-  const count = async () => { const n = (await bridge.invoke('drafts:get')).length; badge.textContent = n > 9 ? '9+' : n; badge.hidden = !n; };
+  // red: cards that wait on the user's click, counted; a dot: a result they asked for (src/badge.ts)
+  const count = async () => {
+    const { red, dot } = await bridge.invoke('drafts:badge');
+    badge.textContent = red ? (red > 9 ? '9+' : red) : ''; badge.className = red ? 'pbadge' : 'pbadge dot'; badge.hidden = !red && !dot;
+  };
   bridge.on('drafts', count);
   count();
 })();

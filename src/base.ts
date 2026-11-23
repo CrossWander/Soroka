@@ -88,7 +88,10 @@ if (!OPTIONS.wakeMode.includes(settings.wakeMode)) settings.wakeMode = 'notify';
 // without the AI label
 export type Draft = { chatId: string; title: string; note: string; last: string; text: string; variants?: string[]; busy?: boolean; error?: string;
   context?: string[]; kind: 'incoming' | 'fyi' | 'request' | 'improve' | 'nudge'; status: 'pending' | 'sent' | 'rejected' | 'answered' | 'read'; at: number;
-  remindAt?: number; reminded?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean };
+  remindAt?: number; reminded?: boolean; urgent?: boolean; held?: boolean; hushed?: boolean; preview?: string; msgs?: Msg[]; kept?: boolean;
+  from?: 'ai'; back?: boolean; failed?: boolean; ready?: number };
+// from: an AI session's draft (POST /draft); back: came back by a reminder (its snooze ended, or "still no answer");
+// failed: its send failed; ready: when a result the user asked for (variants, improved text) came, or failed (src/badge.ts)
 // msgs: the messages of an incoming card, as they came one by one (the chat list's preview, or the opened chat's text in
 // drafts mode); who: their author in a group; me: the message the card came for in a group (the mention, the keyword)
 export type Msg = { who?: string; text: string; time: string; me?: boolean };
