@@ -34,7 +34,8 @@ const S: Record<string, [string, string, string]> = {
   'strip.suggestTip': ['Варіанти відповіді для відкритого чату · Ctrl+Shift+R', 'Reply options for the open chat · Ctrl+Shift+R', 'Варианты ответа для открытого чата · Ctrl+Shift+R'],
   'strip.improve': ['✍ Покращити текст', '✍ Improve text', '✍ Улучшить текст'],
   'strip.improveTip': ['Кращі версії тексту, набраного в полі Teams · Ctrl+Shift+I', 'Better versions of the text typed in Teams · Ctrl+Shift+I', 'Лучшие версии текста, набранного в поле Teams · Ctrl+Shift+I'],
-  'strip.summary': ['📝 Підсумок', '📝 Summary', '📝 Выжимка'],
+  'strip.summary': ['📝 Підсумок чату', '📝 Chat summary', '📝 Выжимка чата'],
+  'strip.improveEmpty': ['Спершу напишіть текст', 'Type your text first', 'Сначала напишите текст'],
   'strip.summaryTip': ['Підсумок відкритого чату · Ctrl+Shift+S', 'Summary of the open chat · Ctrl+Shift+S', 'Выжимка открытого чата · Ctrl+Shift+S'],
   'strip.draftsTip': ['Відповіді, що чекають на надсилання', 'Replies waiting to be sent', 'Ответы, которые ждут отправки'],
   'strip.refresh': ['⟳ Оновити Teams', '⟳ Reload Teams', '⟳ Обновить Teams'],
@@ -487,6 +488,7 @@ const S: Record<string, [string, string, string]> = {
   'diag.messages': ['читання чатів і підсумки', 'reading chats and summaries', 'чтение чатов и выжимки'],
   'diag.compose': ['надсилання відповідей', 'sending replies', 'отправка ответов'],
   'diag.menu': ['тема й мова Teams', 'Teams theme and language', 'тема и язык Teams'],
+  'diag.chips': ['кнопки над полем вводу', 'buttons above the compose box', 'кнопки над полем ввода'],
   'toast.teamsChanged': ['Teams змінився', 'Teams has changed', 'Teams изменился'],
   'toast.teamsChangedText': ['Може не працювати: {list}. Звіт для автора — у налаштуваннях.', 'May not work: {list}. A report for the author is in Settings.', 'Может не работать: {list}. Отчёт для автора — в настройках.'],
   // test notification

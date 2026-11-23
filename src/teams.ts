@@ -69,6 +69,7 @@ export const selfCheck = (): Promise<Record<string, boolean | null>> => run(() =
     header: chatOpen ? has('[id^="chat-header-"]') : null,
     messages: chatOpen ? has('[data-tid="chat-pane-message"][data-mid]') && has('[id^="content-"]') : null,
     compose: chatOpen ? has('[id^="new-message-"]') : null,
+    chips: chatOpen && has('[id^="chat-header-"]') ? has('[data-tb-chips]') : null, // Soroka's buttons above the box (watchUi)
     menu: has('[data-tid="more-options-header"]'),
   };
 });
@@ -200,6 +201,86 @@ export async function watchChats(onChange: () => void) {
 // that looks like one of them (not seen; nothing known keeps a message's markup from bringing one).
 const MSG = '[data-tid="chat-pane-message"]';
 const OUT = `:not(${MSG} *)`;
+
+// ---------- Soroka's own buttons in the Teams page ----------
+// Above the compose box of an open chat: "Suggest a reply", "Improve my text", "Chat summary" — a click runs the same as the
+// hotkey, nothing is sent. Teams re-renders its page at will: an observer puts the row back, always one.
+// The row goes in Teams' compose footer, right before the card that holds the box (seen live 2026-11-23: the footer's
+// children are a gutter for "typing…", the box's card, a 16 px line under it). A chat, not a channel: its header
+// [id^="chat-header-"] is there. The colours are Teams' own Fluent tokens, so they follow Teams' theme, not Windows'.
+export type UiAct = 'suggest' | 'improve' | 'summary' | 'drafts' | 'settings';
+const UI_ACTS: string[] = ['suggest', 'improve', 'summary', 'drafts', 'settings'] satisfies UiAct[];
+// labels: "✨ Suggest reply" — the first word is the icon; ai: the AI ones are shown; running: a spinner, clicks wait
+export type Chips = { suggest: string; improve: string; summary: string; tips: Record<'suggest' | 'improve' | 'summary', string>; empty: string; ai: boolean; running: UiAct[] };
+export type PageUi = { chips: Chips };
+// A user style sheet (insertCSS) loses to Teams' own rules unless !important: every rule here is. Its colours do not turn
+// a button's native look off as an author's would (seen live): appearance: none does.
+export const UI_CSS = `
+[data-tb-chips] { display: flex !important; align-items: center !important; gap: 6px !important; padding: 0 0 6px 2px !important; }
+[data-tb-chips] > img { width: 16px !important; height: 16px !important; margin-right: 2px !important; }
+.tb-chip { appearance: none !important; display: inline-flex !important; align-items: center !important; gap: 6px !important; height: 28px !important; padding: 0 12px !important; margin: 0 !important;
+  border-radius: 14px !important; box-sizing: border-box !important; cursor: pointer !important; border: 1px solid var(--colorBrandStroke2, #c5cbfa) !important;
+  background: transparent !important; color: var(--colorBrandForeground1, #5b5fc7) !important; font: inherit !important; font-size: 12px !important; white-space: nowrap !important; }
+.tb-chip:hover { background: var(--colorBrandBackground2, #ebf3fc) !important; }
+.tb-chip[aria-disabled="true"] { opacity: .45 !important; cursor: default !important; background: transparent !important; }
+.tb-spin { width: 10px !important; height: 10px !important; border-radius: 50% !important; box-sizing: border-box !important;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent) !important; border-top-color: currentColor !important; animation: tb-spin .8s linear infinite !important; }
+@keyframes tb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tb-spin { animation-duration: 3s !important; } }`;
+const ACT = 'tbAct';
+export async function watchUi(icon: string, onAct: (act: UiAct) => void) {
+  await bind(ACT, payload => { if (UI_ACTS.includes(payload)) onAct(payload as UiAct); });
+  await run(([name, box, icon]) => {
+    const w = window as any;
+    w.__tbUiWatch?.disconnect();
+    const render = () => {
+      const ui = w.__tbUi, input = document.querySelector(box) as HTMLElement | null;
+      const card = input?.closest('[data-tid="chat-pane-compose-message-footer"] > *');
+      const here = !!ui && !!card && !!document.querySelector('[id^="chat-header-"]');
+      for (const r of document.querySelectorAll('[data-tb-chips]')) if (!here || r.nextElementSibling !== card) r.remove();
+      if (!here) return;
+      let row = card!.previousElementSibling as HTMLElement | null;
+      if (!row?.hasAttribute('data-tb-chips')) {
+        row = document.createElement('div');
+        row.setAttribute('data-tb-chips', '');
+        row.addEventListener('mousedown', e => e.preventDefault()); // the caret stays in the box
+        row.addEventListener('click', e => {
+          const b = (e.target as Element).closest('button');
+          if (b && !b.getAttribute('aria-disabled') && !b.querySelector('.tb-spin')) w[name]?.(b.dataset.tbAct);
+        });
+        card!.before(row);
+      }
+      // the box's text without a quoted message's card, as boxText reads it
+      const empty = !(input!.innerText ?? '').replace((input!.querySelector('card') as HTMLElement | null)?.innerText || '\0', '').trim();
+      const c = ui.chips, key = JSON.stringify([c, empty]);
+      if ((row as any).__tbKey === key) return; // the observer sees the row's own changes too
+      (row as any).__tbKey = key;
+      const chip = (act: string, label: string, tip: string, off = false) => {
+        const b = document.createElement('button');
+        b.type = 'button'; // never a submit of Teams' form
+        b.className = 'tb-chip'; b.dataset.tbAct = act; b.title = tip;
+        if (off) b.setAttribute('aria-disabled', 'true');
+        const [mark, ...words] = label.split(' '), ic = document.createElement('span');
+        if (c.running.includes(act)) ic.className = 'tb-spin'; else ic.textContent = mark;
+        b.append(ic, words.join(' '));
+        return b;
+      };
+      const logo = document.createElement('img');
+      logo.src = icon; logo.alt = '';
+      row.replaceChildren(logo, ...(c.ai ? [chip('suggest', c.suggest, c.tips.suggest), chip('improve', c.improve, empty ? c.empty : c.tips.improve, empty)] : []),
+        chip('summary', c.summary, c.tips.summary));
+    };
+    w.__tbRender = render;
+    let timer = 0;
+    w.__tbUiWatch = new MutationObserver(() => { // Teams changes the page constantly: at most three times a second
+      if (!timer) timer = window.setTimeout(() => { timer = 0; render(); }, 300);
+    });
+    w.__tbUiWatch.observe(document.body, { subtree: true, childList: true, characterData: true });
+    render();
+  }, [ACT, BOX, icon]);
+}
+// The app's state for its buttons in the page: what they say, which are on, what runs
+export const showUi = (ui: PageUi): Promise<void> => run(ui => { (window as any).__tbUi = ui; (window as any).__tbRender?.(); }, ui);
 
 // ---------- calls: an incoming call, or a meeting that started, as Teams shows it in its page ----------
 // Teams' toast for them, at the bottom right, marks its parts with data-testid (its notifications app, read in its bundle):

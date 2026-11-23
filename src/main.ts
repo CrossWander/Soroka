@@ -156,15 +156,32 @@ let panelSeenAt = Date.now();
 const badgeNow = () => badge(pending(), panelTab === 'drafts' ? Infinity : panelSeenAt);
 const stripState = () => ({ chat: chatInView, badge: badgeNow(), ready: status === 'ready', ai: aiReady(), aiOff: settings.aiOff, busy: activity.at(-1) ?? '',
   note: status === 'ready' ? '' : t(`teams.${status}`), active: teamsWin?.isFocused() ?? true, menu: !!menuView, panel: !!panelTab, settings: !!settingsView });
-const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); };
+const pushStrip = () => { if (teamsWin && !teamsWin.isDestroyed()) teamsWin.webContents.send('strip', stripState()); pushPage(); };
+// Soroka's buttons in the Teams page (teams.watchUi): their state goes in whenever it changes
+const running = new Set<teams.UiAct>(); // the buttons' actions going on: a second click (or hotkey) starts nothing
+function once(name: teams.UiAct, fn: () => Promise<unknown>) {
+  if (running.has(name)) return;
+  running.add(name); pushPage();
+  void fn().catch(e => log(`${name}:`, errorText(e))).finally(() => { running.delete(name); pushPage(); });
+}
+const pageUi = (): teams.PageUi => ({ chips: { suggest: t('strip.suggest'), improve: t('strip.improve'), summary: t('strip.summary'),
+  tips: { suggest: t('strip.suggestTip'), improve: t('strip.improveTip'), summary: t('strip.summaryTip') }, empty: t('strip.improveEmpty'),
+  ai: !settings.aiOff && aiReady(), running: [...running] } }); // no AI (turned off, or none ready): only the summary, without AI
+let lastUi = ''; // what the page has: '' after a load, when its watcher is new
+function pushPage() {
+  const json = JSON.stringify(pageUi());
+  if (status !== 'ready' || json === lastUi) return;
+  lastUi = json;
+  teams.showUi(JSON.parse(json)).catch(() => { lastUi = ''; });
+}
 export async function working<T>(what: string, fn: () => Promise<T>) {
   activity.push(what); pushStrip();
   try { return await fn(); } finally { activity.splice(activity.indexOf(what), 1); pushStrip(); }
 }
 const ACTIONS: Record<string, () => void> = {
-  suggest: () => (aiReady() ? void suggestHere() : explainAi()), // the hotkey works even when the button is greyed out
-  summary: () => void summaryHere(),
-  improve: () => (aiReady() ? void improveHere() : explainAi()),
+  suggest: () => (aiReady() ? once('suggest', suggestHere) : explainAi()), // the hotkey works even when the button is hidden
+  summary: () => once('summary', summaryHere),
+  improve: () => (aiReady() ? once('improve', improveHere) : explainAi()),
   drafts: () => (panelTab ? closePanel() : showDrafts()), // ▤ in the title bar
   // while Teams does not load, F5 loads it again at once; one reload waiting in the queue is enough
   refresh: () => { if (connecting) reloadNow = true; else void serial(() => connect(false)); },
@@ -310,7 +327,7 @@ export function newTeamsPage() {
   // took a click there for the start of a drag: the app launcher and the search box got none. The window drags by the strip.
   page.on('dom-ready', () => {
     void page.insertCSS('*{app-region:no-drag!important}', { cssOrigin: 'user' });
-    if (main()) { officeMenuKey = undefined; void applyOfficeMenu(); } // a new document has none of the old rules
+    if (main()) { officeMenuKey = undefined; void applyOfficeMenu(); void page.insertCSS(teams.UI_CSS, { cssOrigin: 'user' }); } // a new document has none of the old rules
   });
   teams.attach(page);
 }
@@ -322,6 +339,7 @@ const watch = () => Promise.all([
   teams.watchCall(onCall),
   teams.watchSignIn(onSignIn),
   jiraLinks(),
+  teams.watchUi(APP_ICON_URL, act => ACTIONS[act]()).then(() => { lastUi = ''; pushPage(); }),
 ]).catch(e => log('watch:', errorText(e)));
 
 // The picture of "nothing open" (teams.pickHint): a magpie on a branch types (the dots bubble comes from its beak) while a message
