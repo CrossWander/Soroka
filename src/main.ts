@@ -320,15 +320,42 @@ const watch = () => Promise.all([
   jiraLinks(),
 ]).catch(e => log('watch:', errorText(e)));
 
-// The picture of "nothing open" (teams.pickHint): the app's magpie on its purple disc between two chat bubbles in Teams' colours.
+// The picture of "nothing open" (teams.pickHint): a magpie on a branch types (the dots bubble comes from its beak) while a message
+// comes in from the side, in Teams' colours. A light rim keeps the black bird visible on a dark background and is lost on a light one.
 let pickSvg = '';
 const pickPicture = () => pickSvg ||= 'data:image/svg+xml;base64,' + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="260" height="170">
-  <circle cx="130" cy="104" r="62" fill="#5B5FC7"/>
-  <image x="62" y="36" width="136" height="136" href="data:image/png;base64,${icon.png(272, { bare: true }).toString('base64')}"/>
-  <rect x="14" y="20" width="88" height="46" rx="16" fill="#E8EBFA"/><path d="M78 62 L96 78 L92 60 Z" fill="#E8EBFA"/>
-  <rect x="30" y="34" width="56" height="6" rx="3" fill="#7F85F5"/><rect x="30" y="47" width="36" height="6" rx="3" fill="#7F85F5"/>
-  <rect x="166" y="6" width="82" height="44" rx="16" fill="#7F85F5"/><path d="M184 46 L170 62 L196 48 Z" fill="#7F85F5"/>
-  <circle cx="190" cy="28" r="4.5" fill="#fff"/><circle cx="207" cy="28" r="4.5" fill="#fff"/><circle cx="224" cy="28" r="4.5" fill="#fff"/>
+  <defs>
+    <linearGradient id="tail" x1="0" y1="0" x2="1" y2="0.6"><stop offset="0" stop-color="#164a44"/><stop offset=".45" stop-color="#2a7f97"/><stop offset=".8" stop-color="#5a4fb0"/><stop offset="1" stop-color="#2e2b55"/></linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b4680"/><stop offset=".6" stop-color="#1f6a86"/><stop offset="1" stop-color="#14232e"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2e37"/><stop offset="1" stop-color="#0c0d10"/></linearGradient>
+  </defs>
+  <rect x="8" y="10" width="62" height="32" rx="14" fill="#7F85F5"/><path d="M40 41 L49 60 L50 41 Z" fill="#7F85F5"/>
+  <circle cx="26" cy="26" r="4" fill="#fff"/><circle cx="39" cy="26" r="4" fill="#fff"/><circle cx="52" cy="26" r="4" fill="#fff"/>
+  <rect x="158" y="8" width="94" height="44" rx="16" fill="#E8EBFA"/><path d="M232 51 L246 66 L243 50 Z" fill="#E8EBFA"/>
+  <rect x="172" y="21" width="58" height="6" rx="3" fill="#7F85F5"/><rect x="172" y="34" width="38" height="6" rx="3" fill="#7F85F5"/>
+  <g transform="translate(28 25)">
+    <path d="M14 116 C56 110 120 112 200 104" stroke="#9a7354" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M150 108 C160 98 170 94 182 92" stroke="#9a7354" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <g fill="none" stroke="#dfe2ec" stroke-opacity=".75" stroke-width="3.2" stroke-linejoin="round">
+      <path d="M116 80 C142 92 176 110 216 126 C219 128 217 132 212 131 C174 121 138 107 112 95 Z"/>
+      <path d="M44 37 C45 26 61 23 68 30 C75 37 85 45 99 51 C111 56 121 66 127 76 L121 88 C105 98 82 100 66 94 C52 88 44 76 43 62 C42 55 42 49 44 45 Z"/>
+      <path d="M62 58 C78 51 98 56 114 66 C128 75 138 85 145 96 C130 93 110 87 95 81 C80 75 68 68 62 58 Z"/>
+      <path d="M45 39.5 C39 40 31 43 23.5 47 C31 48.8 39 50.2 46 50.6 Z"/>
+    </g>
+    <path d="M116 80 C142 92 176 110 216 126 C219 128 217 132 212 131 C174 121 138 107 112 95 Z" fill="url(#tail)"/>
+    <path d="M120 86 C148 99 180 114 212 128" stroke="#8fe0dc" stroke-opacity=".45" stroke-width=".8" fill="none"/>
+    <path d="M88 96 L86 112 M98 97 L97 112" stroke="#6b6f7a" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M80 113 L92 112 M92 113 L102 112" stroke="#6b6f7a" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M44 37 C45 26 61 23 68 30 C75 37 85 45 99 51 C111 56 121 66 127 76 L121 88 C105 98 82 100 66 94 C52 88 44 76 43 62 C42 55 42 49 44 45 Z" fill="url(#body)"/>
+    <ellipse cx="58" cy="32" rx="8" ry="3.5" transform="rotate(-18 58 32)" fill="#fff" fill-opacity=".16"/>
+    <path d="M49 74 C56 88 76 96 100 94 C110 92 116 89 119 85 C104 81 84 74 66 66 C58 63 51 67 49 74 Z" fill="#f4f4f2"/>
+    <path d="M62 58 C78 51 98 56 114 66 C128 75 138 85 145 96 C130 93 110 87 95 81 C80 75 68 68 62 58 Z" fill="url(#wing)"/>
+    <path d="M64 58 C76 53 92 55 105 62 C97 67 84 69 73 66 C68 64 65 61 64 58 Z" fill="#f4f4f2"/>
+    <path d="M100 72 C114 78 128 86 140 94 M96 77 C110 83 122 89 134 94" stroke="#7fc4e6" stroke-opacity=".6" stroke-width=".9" fill="none"/>
+    <path d="M45 39.5 C39 40 31 43 23.5 47 C31 48.8 39 50.2 46 50.6 Z" fill="#0b0c0e"/>
+    <path d="M24.5 47 C31 47 38 46.8 45 46" stroke="#4a4f58" stroke-width=".7" fill="none"/>
+    <circle cx="55.5" cy="40" r="2.4" fill="#050506"/><circle cx="54.7" cy="39.2" r=".8" fill="#fff" fill-opacity=".9"/>
+  </g>
 </svg>`).toString('base64');
 const onWatch = () => ({ picture: pickPicture(), title: t('teams.pickTitle'), line: t('teams.pickLine') });
 // The chat in the user's sight when the window hid, and where in it; what a card opens with the window instead.
