@@ -1,7 +1,7 @@
 // Soroka: tray app that keeps Teams web in a hidden window, tells the user about personal messages and @mentions,
 // suggests replies and chat summaries with the AI of the user's own subscription (Claude Code, Codex, Gemini… on this
 // computer), and sends only what the user approves.
-import { app, BrowserWindow, Menu, Tray, WebContentsView, clipboard, dialog, nativeImage, nativeTheme, net, screen, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, WebContentsView, clipboard, dialog, nativeImage, nativeTheme, net, screen, session, shell, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -102,7 +102,10 @@ export let teamsPage: Electron.WebContents;
 type Tab = 'drafts' | 'summary';
 const panelPages: Partial<Record<Tab, WebContentsView>> = {};
 export let panelTab: Tab | null = null; // null: the panel is closed
+let panelView: WebContentsView | null = null; // the tab's page on screen: it comes once it has loaded (openPanel)
+let panelGoing: WebContentsView | null = null; // the closed panel's page while it slides off
 export let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
+let settingsCover = false; // the settings, faded in, are under Windows' buttons: these take their colours
 let tray: Tray;
 export let status: 'starting' | 'login' | 'ready' = 'starting';
 export let quitting = false;
@@ -159,7 +162,7 @@ const sendFrame = () => { for (const v of [...Object.values(panelPages), setting
 const below = (top: number) => { const [width, height] = teamsWin.getContentSize(); return { x: 0, y: top, width, height: height - top }; };
 // the caption buttons' colours follow what is under them: Teams' header, or the strip's colours (the strip, and the band of the
 // panel and the settings, which take the window's right end when open)
-const overlay = () => ({ height: raised?.height ?? STRIP, ...(raised && !panelTab && !settingsView ? { color: raised.bg, symbolColor: raised.fg }
+const overlay = () => ({ height: raised?.height ?? STRIP, ...(raised && !panelView && !panelGoing && !settingsCover ? { color: raised.bg, symbolColor: raised.fg }
   : nativeTheme.shouldUseDarkColors ? { color: '#1f1f1f', symbolColor: '#ffffff' } : { color: '#ebebeb', symbolColor: '#242424' }) });
 let lastOverlay = '';
 function caption() {
@@ -215,7 +218,7 @@ const pageUi = (): teams.PageUi => ({ chips: { suggest: t('strip.suggest'), impr
   tips: { suggest: t('strip.suggestTip'), improve: t('strip.improveTip'), summary: t('strip.summaryTip') }, empty: t('strip.improveEmpty'),
   ai: !settings.aiOff && aiReady(), running: [...running] }, // no AI (turned off, or none ready): only the summary, without AI
   bar: { badge: badgeNow(), busy: activity.at(-1) ?? '', panel: !!panelTab, settings: !!settingsView,
-    controls: panelTab ? 0 : controls, // the panel takes the window's right end: Windows' buttons are over it, not over Teams
+    controls: panelView ? 0 : controls, // the panel takes the window's right end: Windows' buttons are over it, not over Teams
     tips: { drafts: t('strip.draftsTip'), settings: t('strip.settingsTip') } } });
 let lastUi = ''; // what the page has: '' after a load, when its watcher is new
 function pushPage() {
@@ -304,12 +307,24 @@ function createTeamsWindow() {
 export let teamsView: WebContentsView;
 const PANEL = 360;
 const layout = () => {
-  const r = below(top()), side = panelTab && panelPages[panelTab];
-  teamsView.setBounds(side ? { ...r, width: r.width - PANEL } : r);
-  side?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
+  const r = below(top());
+  teamsView.setBounds(panelView ? { ...r, width: r.width - PANEL } : r);
+  panelView?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
   settingsView?.setBounds(r);
   caption();
 };
+// The panel sliding in or out, stepped here: Electron's own (setBounds' animate) drew it mirrored on Windows, in off the
+// window and out to the left (seen live 2026-11-23). Eased: fast at the start coming in, at the end going out.
+function slide(view: WebContentsView, from: number, to: number, ms: number, done?: () => void) {
+  const start = Date.now();
+  const step = () => {
+    if (teamsWin.isDestroyed()) return;
+    const p = Math.min(1, (Date.now() - start) / ms), e = to < from ? 1 - (1 - p) ** 3 : p * p;
+    view.setBounds({ ...view.getBounds(), x: Math.round(from + (to - from) * e) });
+    if (p < 1) setTimeout(step, 8); else done?.();
+  };
+  step();
+}
 // The setting hides the button of Teams' Office menu in the main Teams page; the key takes the rule back.
 let officeMenuKey: string | undefined;
 async function applyOfficeMenu() {
@@ -573,37 +588,60 @@ const report = () => [
 // The panel on the right of the Teams page, beside it rather than over it, with two tabs: the answers (ui/drafts.html) and
 // the summary (ui/summary.html). A tab's page lives until the panel closes, so a summary goes on while "Replies" is on
 // screen; closed, the panel's pages go: renderers less while it is not looked at.
+// A new page is white until it draws, so it gets its colours and comes on screen once loaded; the closed panel slides in
+// from the right (Teams narrows at once) and out the same way, a tab of the open one takes the place of the other at once.
+const panelBg = () => (nativeTheme.shouldUseDarkColors ? '#1f1f1e' : '#f6f6f4'); // --bg of ui/drafts.html, ui/summary.html
+const motion = () => !systemPreferences.getAnimationSettings().prefersReducedMotion; // Windows' "Animation effects"
+const loaded = (page: Electron.WebContents) => new Promise<void>(done => {
+  if (!page.isLoadingMainFrame()) return done();
+  const late = setTimeout(done, 500);
+  page.once('did-finish-load', () => { clearTimeout(late); done(); });
+});
 export function openPanel(tab: Tab) {
   let page = panelPages[tab];
   if (!page) {
     page = panelPages[tab] = new WebContentsView({ webPreferences: { preload } });
+    page.setBackgroundColor(panelBg());
     page.webContents.loadFile(ui(`${tab}.html`));
     page.webContents.on('before-input-event', hotkey);
   }
-  const shown = panelTab && panelPages[panelTab];
   if (panelTab === 'drafts' && tab !== 'drafts') panelSeenAt = Date.now();
-  if (shown !== page) {
-    if (shown) teamsWin.contentView.removeChildView(shown);
-    teamsWin.contentView.addChildView(page, 1); // above Teams, under the settings
-  }
   panelTab = tab;
-  layout();
   pushStrip();
+  const view = page;
+  void loaded(view.webContents).then(() => {
+    if (panelTab !== tab || panelPages[tab] !== view || panelView === view) return; // closed or another tab meanwhile, or there
+    const comes = !panelView && motion();
+    if (panelView) teamsWin.contentView.removeChildView(panelView);
+    teamsWin.contentView.addChildView(view, 1); // above Teams, under the settings
+    panelView = view;
+    layout();
+    if (comes) { const { x } = view.getBounds(); slide(view, x + PANEL, x, 180); } // from just past the window's right edge
+    pushStrip();
+  });
   return page.webContents;
 }
 function closePanel() {
   if (!panelTab) return;
   if (panelTab === 'drafts') panelSeenAt = Date.now();
-  teamsWin.contentView.removeChildView(panelPages[panelTab]!);
-  for (const tab of Object.keys(panelPages) as Tab[]) {
+  const going = panelView, pages = (Object.keys(panelPages) as Tab[]).map(tab => {
     const page = panelPages[tab]!.webContents;
     delete panelPages[tab];
     if (tab === 'summary' && !settings.summaryBackground) summaryRuns.get(page.id)?.abort(); // else it goes on and ends with a toast
-    page.close();
-  }
-  panelTab = null;
-  layout();
+    return page;
+  });
+  panelTab = null; panelView = null; panelGoing = going;
+  layout(); // Teams takes its width back under the panel, which slides off to the right
   pushStrip();
+  const gone = () => {
+    if (teamsWin.isDestroyed()) return;
+    if (going) teamsWin.contentView.removeChildView(going);
+    for (const page of pages) page.close();
+    if (panelGoing === going) { panelGoing = null; caption(); } // Windows' buttons in Teams' colours once it is gone
+  };
+  if (!going || !motion()) return gone();
+  const { x } = going.getBounds();
+  slide(going, x, x + PANEL, 150, gone);
 }
 export const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
 handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
@@ -620,25 +658,33 @@ function draftsChanged() {
 }
 
 // The settings cover the Teams window; the page lays its sections out in as many columns as fit.
+// Its view is transparent: the page fades in over Teams from its first frame and out before it goes (ui/settings.html);
+// Windows' buttons take its colours halfway through.
 export function showSettings(welcome = false) {
   showTeams(); // closes one open already: it comes back fresh, at the top
-  settingsView = new WebContentsView({ webPreferences: { preload } });
-  settingsView.webContents.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
-  teamsWin.contentView.addChildView(settingsView);
-  layout(); // its bounds, and the caption buttons in its colours
-  settingsView.webContents.focus();
+  const view = settingsView = new WebContentsView({ webPreferences: { preload } });
+  view.setBackgroundColor('#00000000');
+  view.webContents.loadFile(ui('settings.html'), { query: welcome ? { welcome: '1' } : {} });
+  teamsWin.contentView.addChildView(view);
+  layout(); // its bounds
+  view.webContents.focus();
   pushStrip(); // ⚙ shows pressed
+  setTimeout(() => { if (settingsView === view) { settingsCover = true; caption(); } }, 80);
 }
 export function closeSettings() {
   const view = settingsView;
   if (!view) return;
   settingsView = null;
-  teamsWin.contentView.removeChildView(view);
   layout();
   teamsPage.focus();
   pushStrip();
-  // a text field saves when it loses focus: let the one being typed in save, then close the page
-  void view.webContents.executeJavaScript('document.activeElement?.blur()').catch(() => {}).finally(() => view.webContents.close());
+  setTimeout(() => { if (!settingsView) { settingsCover = false; caption(); } }, 60);
+  // a text field saves when it loses focus: let the one being typed in save, and the page fade out, then close it
+  const out = view.webContents.executeJavaScript(`document.activeElement?.blur(); document.documentElement.classList.add('leaving')`).catch(() => {});
+  void Promise.all([out, new Promise(done => setTimeout(done, teamsWin.isVisible() && motion() ? 130 : 0))]).finally(() => {
+    if (!teamsWin.isDestroyed()) teamsWin.contentView.removeChildView(view);
+    view.webContents.close();
+  });
 }
 handle('settings:close', () => closeSettings());
 

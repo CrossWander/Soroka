@@ -4,13 +4,21 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title data-i18n="set.title">Soroka</title>
+<script>setTimeout(() => document.documentElement.classList.add('ready'), 1000); // shown even if filling it failed</script>
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f4; --card: #fff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e3de; --accent: #5b5fc7; --ok: #107c10; --warn: #c4314b;
     --hover: rgba(0,0,0,.05); --sel: rgba(91,95,199,.10); --knob: #fff; --off: #8a8a85; }
   @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1e; --card: #2a2a29; --fg: #ececea; --muted: #a0a09a; --line: #3a3a38; --accent: #8f95ff; --ok: #6ccb5f; --warn: #ff8a9e;
     --hover: rgba(255,255,255,.07); --sel: rgba(143,149,255,.14); --knob: #1f1f1e; --off: #8f8f8a; } }
   html, body { height: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  /* over the Teams page in a transparent view (src/main.ts showSettings): fades in once filled (html.ready), out on closing.
+     The background is a layer of the page, not the body's: a body's goes to the canvas, which the fade does not touch */
+  html { opacity: 0; }
+  html.ready { opacity: 1; transition: opacity .15s ease-out; }
+  html.ready.leaving { opacity: 0; transition: opacity .12s ease-in; }
+  html::before { content: ""; position: fixed; inset: 0; z-index: -1; background: var(--bg); }
+  @media (prefers-reduced-motion: reduce) { html.ready, html.ready.leaving { transition: none; } }
+  body { margin: 0; color: var(--fg); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
   /* as Teams' and Windows 11's own settings: the sections on the left, one of them on the right */
   .shell { height: 100%; display: flex; }
   /* at the window's top (ui/frame.js): a band that moves the window, as high as Teams' header, in the strip's colours */
@@ -243,7 +251,7 @@
       bridge.invoke('settings:get').then(s => show(s, el?.type === 'checkbox' ? undefined : el));
     }
   };
-  bridge.invoke('settings:get').then(s => show(s));
+  bridge.invoke('settings:get').then(s => show(s)).finally(() => requestAnimationFrame(() => document.documentElement.classList.add('ready')));
   // The agents found on this computer; the chosen one is picked again once they are in the list
   bridge.invoke('agents:list').then(list => {
     $('agent').append(...list.map(a => new Option(`${a.name} — ${t(a.now ? 'set.agentNow' : 'set.agentFill')}`, a.id)));
