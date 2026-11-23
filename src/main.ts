@@ -1158,7 +1158,8 @@ export const PLAIN: Electron.BrowserWindowConstructorOptions = { frame: true, tr
 function openWindow({ url }: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse {
   if (/^https:\/\/login\.(microsoftonline|live)\.com\//.test(url)) return { action: 'allow', overrideBrowserWindowOptions: PLAIN };
   if (!/^https?:\/\//.test(url)) return { action: 'deny' };
-  if (settings.links === 'browser' && !(MICROSOFT.test(url) && /[?&]login_hint=/.test(url))) { void shell.openExternal(url); return { action: 'deny' }; }
+  // Teams' own windows (a meeting's content, an app, its pages) stay in the app with its session, as in the Teams app
+  if (settings.links === 'browser' && !TEAMS_PAGE.test(url) && !(MICROSOFT.test(url) && /[?&]login_hint=/.test(url))) { void shell.openExternal(url); return { action: 'deny' }; }
   return { action: 'allow', overrideBrowserWindowOptions: { ...PLAIN, width: 1200, height: 820 } };
 }
 // a page must not veto closing its window: a sign-in popup Teams opened did, and that cancelled the quit from the tray.
