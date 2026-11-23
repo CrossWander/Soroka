@@ -3,7 +3,7 @@ import { BaseWindow, BrowserWindow, desktopCapturer, nativeImage, screen } from 
 import * as teams from './teams';
 import { ui, handle, logged, log, errorText, serial, state, saveState } from './base';
 import { t } from './i18n';
-import { cardWindow, corner } from './toast';
+import { cardWindow, setRingCard } from './toast';
 import { showTeams, teamsView, teamsWin, closeSettings, newTeamsPage, connect, APP_ICON, preload, TEAMS_PAGE } from './main';
 
 // Teams rings in its own page; the app mirrors that toast — who calls, and Teams' own buttons — in a window of its own
@@ -35,11 +35,11 @@ function showRing() {
   const win = ringWin = cardWindow({ title: t('call.window') });
   win.loadFile(ui('call.html'));
   win.webContents.on('did-finish-load', () => win.webContents.send('ring', ringView())); // also after a reload (a language change)
-  win.on('closed', () => { if (ringWin === win) ringWin = null; });
+  win.on('closed', () => { if (ringWin === win) { ringWin = null; setRingCard(null); } });
 }
-handle('ring:size', (_e, height: number) => { // top right: the regular cards come up at the bottom right
+handle('ring:size', (_e, height: number) => { // bottom right with the other cards, above them (toast.ts placeRing)
   if (!ringWin) return;
-  corner(ringWin, height, 'top');
+  setRingCard(ringWin, height);
   ringWin.setAlwaysOnTop(true, 'screen-saver'); // above full-screen windows too, like Teams' own call toast
   ringWin.showInactive();
 });

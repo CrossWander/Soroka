@@ -2,7 +2,7 @@
 import { BrowserWindow, session } from 'electron';
 import { log, errorText, handle, ui } from './base';
 import { refreshTray, PLAIN, teamsPage } from './main';
-import { cardWindow, corner } from './toast';
+import { cardWindow, corner, placeRing } from './toast';
 
 // Microsoft ended the sign-in (a password change, or IT asked) and Teams shows a banner whose "Sign in" does nothing here
 // (teams.watchSignIn). The app says so even with its window hidden: a card above the clock that follows the sign-in
@@ -34,13 +34,14 @@ function showSignInCard(state: 'ask' | 'wait' | 'done') {
   const win = signInCard = cardWindow();
   win.loadFile(ui('signin.html'));
   win.webContents.on('did-finish-load', () => win.webContents.send('signin', signInState)); // also after a reload (a language change)
-  win.on('closed', () => { if (signInCard === win) { signInCard = null; signInState = ''; } });
+  win.on('closed', () => { if (signInCard === win) { signInCard = null; signInState = ''; placeRing(); } });
 }
 handle('signin:size', (e, height: number) => { // above the clock, under the message cards (toast:size leaves it room)
   if (!signInCard || e.sender !== signInCard.webContents) return;
   corner(signInCard, height);
   signInCard.setAlwaysOnTop(true, 'pop-up-menu');
   if (!signInCard.isVisible()) signInCard.showInactive();
+  placeRing(); // a call card stays above it
 });
 handle('signin:act', (e, name: string) => {
   if (!signInCard || e.sender !== signInCard.webContents) return;

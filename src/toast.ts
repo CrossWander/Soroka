@@ -16,10 +16,22 @@ type Toast = { title: string; message: string; hint?: string; tone?: 'accent' | 
 const CARD = 392;
 export const cardWindow = (o: Electron.BrowserWindowConstructorOptions = {}) => new BrowserWindow({ width: CARD, height: 200, show: false, frame: false,
   transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true, focusable: false, icon: APP_ICON, title: 'Soroka', webPreferences: { preload }, ...o });
-// On the primary screen: bottom right, `above` px higher, or top right.
-export function corner(win: BrowserWindow, height: number, above: number | 'top' = 0) {
+// On the primary screen: bottom right, `above` px higher (never past the top).
+export function corner(win: BrowserWindow, height: number, above = 0) {
   const { workArea: wa } = screen.getPrimaryDisplay(), h = Math.ceil(height);
-  win.setBounds({ width: CARD, height: h, x: wa.x + wa.width - CARD, y: above === 'top' ? wa.y : wa.y + wa.height - h - above });
+  win.setBounds({ width: CARD, height: h, x: wa.x + wa.width - CARD, y: Math.max(wa.y, wa.y + wa.height - h - above) });
+}
+// The call card (calls.ts) stands in the same corner as the others, above them: the sign-in card at the bottom, the message
+// card over it, the call on top. It moves as they come, change height and go.
+let ringCard: { win: BrowserWindow; height: number } | null = null;
+export function placeRing() {
+  if (!ringCard || ringCard.win.isDestroyed()) return;
+  const under = [signInCard, toastWin].reduce((h, w) => h + (w && !w.isDestroyed() && w.isVisible() ? w.getBounds().height : 0), 0);
+  corner(ringCard.win, ringCard.height, under);
+}
+export function setRingCard(win: BrowserWindow | null, height = 0) {
+  ringCard = win ? { win, height } : null;
+  placeRing();
 }
 export let toastWin: BrowserWindow | null = null;
 export let toastDraft: string | undefined; // the message card on screen: its draft, or its channel's stack key
@@ -57,13 +69,14 @@ export function toast(item: Toast, fromQueue = false) {
   toastWin = cardWindow({ height: 160 });
   toastWin.loadFile(ui('toast.html'));
   toastWin.webContents.once('did-finish-load', () => toastWin?.webContents.send('toast', payload));
-  toastWin.on('closed', () => { toastWin = null; nextToast(); });
+  toastWin.on('closed', () => { toastWin = null; placeRing(); nextToast(); });
 }
 handle('toast:size', (_e, height: number) => { // the card measured itself: sit it in the corner and show
   if (!toastWin) return;
   corner(toastWin, height, signInCard?.isVisible() ? signInCard.getBounds().height : 0); // the sign-in card stays below
   toastWin.setAlwaysOnTop(true, 'pop-up-menu');
   if (!toastWin.isVisible()) toastWin.showInactive(); // it also resizes a card on screen (the reply field, the menu): no second show
+  placeRing();
 });
 // the reply field opened: the card takes the keyboard, and is in use until it reports back, however long the user types
 handle('toast:focus', () => { keepCard(); toastWin?.setFocusable(true); toastWin?.focus(); });
