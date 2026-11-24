@@ -4,7 +4,7 @@ import * as teams from './teams';
 import { ui, handle, logged, log, errorText, serial, state, saveState } from './base';
 import { t } from './i18n';
 import { cardWindow, setRingCard } from './toast';
-import { showTeams, teamsView, teamsWin, closeSettings, newTeamsPage, connect, APP_ICON, preload, TEAMS_PAGE } from './main';
+import { showTeams, teamsView, teamsWin, closeSettings, newTeamsPage, chatsAway, chatsBack, APP_ICON, preload, TEAMS_PAGE } from './main';
 
 // Teams rings in its own page; the app mirrors that toast — who calls, and Teams' own buttons — in a window of its own
 // at the bottom right, above the other cards (toast.ts placeRing), for as long as Teams rings. Teams shows a started meeting for a few seconds only: the app keeps it
@@ -60,8 +60,8 @@ async function ringAction(i: number) {
 
 // ---------- a call in a window of its own, as in the Teams app ----------
 // The call lives in the Teams page, so the whole page moves to the call window, and the main window gets a fresh page
-// for the chats. It moves already at a meeting's join screen, as Teams' own app opens its meeting window there.
-// The second page lives only while the call does: the window closes when the call ends, closing it leaves the call.
+// for the chats, loaded only once needed (main.ts chatsAway). It moves already at a meeting's join screen, as Teams' own
+// app opens its meeting window there. The window closes when the call ends, closing it leaves the call.
 export let callWin: BaseWindow | null = null;
 export let callPage: Electron.WebContents | null = null;
 export function onCall(on: string) { // either page may report: the main one a call starting, the call window's one its end
@@ -97,7 +97,11 @@ function popOutCall(what: string) {
     void page.executeJavaScript(`document.querySelector(${JSON.stringify(teams.LEAVE)})?.click()`).catch(() => {}) // "Leave", seen in a live call
       .finally(() => setTimeout(() => page.close(), 1000));
   });
-  win.on('closed', () => { if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); } miniWin?.close(); });
+  win.on('closed', () => {
+    if (callWin === win) { callWin = null; callPage = null; log('call: window closed'); }
+    miniWin?.close();
+    void chatsBack().catch(e => log('call: chats page:', errorText(e))); // what came during the call comes now
+  });
   // as Teams' own: out of screenshots and of a shared screen, a red dot on the taskbar button, the compact view while minimized
   win.setContentProtection(true);
   win.setOverlayIcon(CALL_DOT, t('call.on'));
@@ -106,7 +110,7 @@ function popOutCall(what: string) {
   win.show();
   void teams.stopUi().catch(() => {}); // still this page's: newTeamsPage attaches the next one
   newTeamsPage();
-  void serial(() => connect(false)).catch(e => log('call: chats page:', errorText(e)));
+  chatsAway();
 }
 const CALL_DOT = (() => { // Teams' red (#c4314b) in BGRA, its edge smoothed
   const s = 16, px = Buffer.alloc(s * s * 4);

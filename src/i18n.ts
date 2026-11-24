@@ -10,6 +10,7 @@ const S: Record<string, [string, string, string]> = {
   'teams.starting': ['Підключаюся до Teams…', 'Connecting to Teams…', 'Подключаюсь к Teams…'],
   'teams.login': ['Потрібно увійти в Teams', 'Teams sign-in required', 'Нужен вход в Teams'],
   'teams.ready': ['Teams підключено', 'Teams connected', 'Teams подключён'],
+  'teams.call': ['Іде дзвінок: чати завантажаться, щойно знадобляться', 'In a call: the chats load once needed', 'Идёт звонок: чаты загрузятся, как только понадобятся'],
   'mode.notify': ['ШІ лише за кнопкою', 'AI on a click only', 'ИИ только по кнопке'],
   'mode.noAi': ['без ШІ', 'no AI', 'без ИИ'],
   'mode.drafts': ['ШІ пропонує відповіді одразу', 'AI suggests replies at once', 'ИИ предлагает ответы сразу'],

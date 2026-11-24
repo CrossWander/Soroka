@@ -5,7 +5,7 @@ import * as teams from './teams';
 import { TOKEN, log, errorText, serial, settings, state, type Draft } from './base';
 import { aiSkipped, skippedAuthor, authorOf, skipDraft, wanted, notToAi, forAi } from './filters';
 import { t } from './i18n';
-import { status, inChat, withLabel, addDraft, showDrafts } from './main';
+import { status, inChat, withLabel, addDraft, showDrafts, chatsBack } from './main';
 import { windowAnswer } from './summary';
 import { toast, confirmSend } from './toast';
 
@@ -50,6 +50,7 @@ export function startApi() {
       if (!nonce) return json(res, 401, { error: 'not signed with token.txt' });
       answering.set(res, nonce);
       if (settings.aiOff) return json(res, 403, { error: t('toast.aiOff') }); // "Do not use AI": AI sessions get nothing from Teams either
+      await chatsBack().catch(() => {}); // during a call the chats load for the session
       if (status !== 'ready') return json(res, 503, { error: `teams is not ready: ${status}` });
       const url = new URL(req.url ?? '/', 'http://x');
       const route = `${req.method} ${url.pathname}`;

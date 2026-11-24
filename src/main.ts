@@ -107,7 +107,7 @@ let panelGoing: WebContentsView | null = null; // the closed panel's page while 
 export let settingsView: WebContentsView | null = null; // the settings: a layer over the Teams page, as in Teams
 let settingsCover = false; // the settings, faded in, are under Windows' buttons: these take their colours
 let tray: Tray;
-export let status: 'starting' | 'login' | 'ready' = 'starting';
+export let status: 'starting' | 'login' | 'ready' | 'call' = 'starting'; // call: the chats page waits unloaded (chatsAway)
 export let quitting = false;
 export const preload = path.join(__dirname, 'preload.js');
 
@@ -127,7 +127,7 @@ export function refreshTray() {
   const head = signInAsked ? t('signin.title') : t(`teams.${status}`);
   const doing = t(aiReady() ? `mode.${settings.wakeMode}` : 'mode.noAi');
   // like Teams: a red badge with the number of messages waiting for an answer; "!" when sign-in is needed
-  const look = { grey: status !== 'ready', badge: status === 'login' || signInAsked ? '!' : count ? (count > 9 ? '9+' : String(count)) : undefined };
+  const look = { grey: status === 'starting' || status === 'login', badge: status === 'login' || signInAsked ? '!' : count ? (count > 9 ? '9+' : String(count)) : undefined };
   if (JSON.stringify(look) !== lastTray) { lastTray = JSON.stringify(look); tray.setImage(image(16, look)); }
   tray.setToolTip(`Soroka · ${head}${count ? t('tray.waiting', { n: count }) : ''}`);
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -334,6 +334,7 @@ async function applyOfficeMenu() {
 // The Teams page of the main window. A call takes it to a window of its own (popOutCall), and a new one comes here.
 export function newTeamsPage() {
   const view = teamsView = new WebContentsView({ webPreferences: { session: session.fromPartition('persist:teams'), backgroundThrottling: false } }); // keeps timers running and the page "visible" while hidden
+  view.setBackgroundColor(panelBg()); // not white until Teams draws: it may wait unloaded during a call (chatsAway)
   teamsWin.contentView.addChildView(view, 0); // under the settings, if they are open
   const page = teamsPage = view.webContents;
   layout();
@@ -407,6 +408,7 @@ const onWatch = () => ({ picture: pickPicture(), title: t('teams.pickTitle'), li
 let leftChat: teams.LeftOff | undefined, opening: (() => Promise<unknown>) | undefined;
 // One click on the tray icon: the Teams window, as in the Teams app.
 export function showTeams() {
+  void chatsBack().catch(e => log('chats:', errorText(e))); // waited unloaded during a call
   const parked = status === 'ready' && !teamsWin.isVisible(); // hidden, it went to the self-chat (its 'hide')
   closeSettings(); // every way here (the tray, a toast, a sign-in, "Open" in the settings) wants the Teams page itself
   if (teamsWin.isMinimized()) teamsWin.restore();
@@ -470,10 +472,20 @@ async function restoreChat(before?: string) {
 }
 // Work in a chat the app opens itself (sending, a reaction, reading; undefined: in several): the user's own chat comes back
 // after it, or a hidden window parks on the self-chat, so later messages in that chat are not read unseen.
-export const inChat = <T>(chatId: string | undefined, fn: (before?: string) => Promise<T>) => serial(async () => {
-  const before = windowInUse() ? await teams.currentChatId() : undefined;
-  try { return await fn(before); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
-});
+export const inChat = async <T>(chatId: string | undefined, fn: (before?: string) => Promise<T>) => {
+  await chatsBack(); // a card sent during a call
+  return serial(async () => {
+    const before = windowInUse() ? await teams.currentChatId() : undefined;
+    try { return await fn(before); } finally { await restoreChat(before && before !== chatId ? before : undefined); }
+  });
+};
+// A call takes the Teams page to its own window (calls.ts popOutCall). The main window's new page waits unloaded: a second
+// Teams is ~0.7 GB more for the whole call (2.1 GB with both, seen 2026-11-24). It loads when the window opens, when a card or
+// a Claude session needs the chats, or when the call ends; messages that came meanwhile are still unread there, and come then.
+export function chatsAway() { status = 'call'; refreshTray(); }
+let chatsComing: Promise<void> | undefined;
+export const chatsBack = () => (status !== 'call' ? Promise.resolve()
+  : chatsComing ??= serial(() => connect(false)).finally(() => { chatsComing = undefined; }));
 
 // The chat open in the Teams window, if any, and what else the action reads there: in one turn of the queue, so the app's
 // own work cannot switch the chat in between.
