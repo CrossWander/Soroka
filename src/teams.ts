@@ -217,8 +217,8 @@ const UI_ACTS: string[] = ['suggest', 'improve', 'summary', 'drafts', 'settings'
 // labels: "✨ Suggest reply" — the first word is the icon; ai: the AI ones are shown; running: a spinner, clicks wait
 export type Chips = { suggest: string; improve: string; summary: string; tips: Record<'suggest' | 'improve' | 'summary', string>; empty: string; ai: boolean; running: UiAct[] };
 // badge: the mark on ▤ (src/badge.ts); busy: what Soroka does now (a spinner, the text in ▤'s tooltip); panel, settings: open;
-// controls: the width Windows' buttons take over the header's right end, in px
-export type BarUi = { badge: { red: number; dot: boolean }; busy: string; panel: boolean; settings: boolean; controls: number; tips: { drafts: string; settings: string } };
+// controls: the width Windows' buttons take over the window's right end, window: the window's width, in px
+export type BarUi = { badge: { red: number; dot: boolean }; busy: string; panel: boolean; settings: boolean; controls: number; window: number; tips: { drafts: string; settings: string } };
 export type PageUi = { chips: Chips; bar: BarUi };
 // Teams' header as found: its height and colours (#rrggbb) for the window's caption buttons
 export type Bar = { height: number; bg: string; fg: string };
@@ -239,7 +239,9 @@ export const UI_CSS = `
 [data-tb-bar], [data-tb-bar] * { app-region: drag !important; }
 [data-tb-bar] :is(button, a, input, textarea, select, [role="button"], [role="search"], [role="combobox"], [role="menuitem"], [role="tab"], [contenteditable="true"]),
 [data-tb-bar] :is(button, a, input, textarea, select, [role="button"], [role="search"], [role="combobox"], [role="menuitem"], [role="tab"], [contenteditable="true"]) * { app-region: no-drag !important; }
-[data-tb-bar] { padding-right: calc(var(--tb-controls, 0px) + 8px) !important; box-sizing: border-box !important; }
+/* clear of Windows' buttons where the page reaches under them: computed from the page's own width (100vw) in the frame it
+   changes, as the panel slides in and the page narrows (a padding sent on each change came ~110 ms late: the header jumped) */
+[data-tb-bar] { padding-right: calc(max(0px, var(--tb-controls, 0px) - max(0px, var(--tb-window, 100vw) - 100vw)) + 8px) !important; box-sizing: border-box !important; }
 [data-tb-logo] { width: 18px !important; height: 18px !important; margin: 0 4px 0 14px !important; align-self: center !important; flex: none !important; }
 [data-tb-group] { display: flex !important; align-items: center !important; gap: 2px !important; padding: 0 4px !important; height: 32px !important; margin-right: 4px !important;
   border-radius: 6px !important; background: var(--colorBrandBackground2, #e2e3f7) !important; }
@@ -287,6 +289,7 @@ export async function watchUi(icon: string, onAct: (act: UiAct) => void, onBar: 
       }
       head!.setAttribute('data-tb-bar', '');
       document.documentElement.style.setProperty('--tb-controls', `${ui.bar.controls}px`);
+      document.documentElement.style.setProperty('--tb-window', `${ui.bar.window}px`);
       if (!start!.querySelector(':scope > [data-tb-logo]')) {
         const logo = document.createElement('img');
         logo.src = icon; logo.alt = ''; logo.setAttribute('data-tb-logo', '');

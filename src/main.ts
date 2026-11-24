@@ -218,7 +218,7 @@ const pageUi = (): teams.PageUi => ({ chips: { suggest: t('strip.suggest'), impr
   tips: { suggest: t('strip.suggestTip'), improve: t('strip.improveTip'), summary: t('strip.summaryTip') }, empty: t('strip.improveEmpty'),
   ai: !settings.aiOff && aiReady(), running: [...running] }, // no AI (turned off, or none ready): only the summary, without AI
   bar: { badge: badgeNow(), busy: activity.at(-1) ?? '', panel: !!panelTab, settings: !!settingsView,
-    controls: panelView ? 0 : controls, // the panel takes the window's right end: Windows' buttons are over it, not over Teams
+    controls, window: teamsWin.getContentSize()[0], // the page works out what of its header is under Windows' buttons
     tips: { drafts: t('strip.draftsTip'), settings: t('strip.settingsTip') } } });
 let lastUi = ''; // what the page has: '' after a load, when its watcher is new
 function pushPage() {
@@ -298,7 +298,7 @@ function createTeamsWindow() {
   nativeTheme.on('updated', caption);
   teamsWin.on('focus', pushStrip);
   teamsWin.on('blur', pushStrip); // the title bar fades
-  teamsWin.on('resize', layout);
+  teamsWin.on('resize', () => { layout(); pushPage(); }); // the header's room for Windows' buttons goes by the window's width
   teamsWin.webContents.on('before-input-event', hotkey);
   teamsWin.on('close', e => { if (!quitting) { e.preventDefault(); teamsWin.hide(); } }); // like Teams: closing keeps it in the tray
   teamsWin.on('session-end', flushSession); // Windows signs out or shuts down: no before-quit comes
@@ -314,22 +314,30 @@ function createTeamsWindow() {
 }
 export let teamsView: WebContentsView;
 const PANEL = 360;
+let arriving: WebContentsView | null = null; // the panel's page sliding in: over Teams, which narrows once it is in (openPanel)
 const layout = () => {
   const r = below(top());
-  teamsView.setBounds(panelView ? { ...r, width: r.width - PANEL } : r);
-  panelView?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
+  teamsView.setBounds(panelView && panelView !== arriving ? { ...r, width: r.width - PANEL } : r);
+  if (panelView !== arriving) panelView?.setBounds({ ...r, x: r.width - PANEL, width: PANEL });
   settingsView?.setBounds(r);
   caption();
 };
 // The panel sliding in or out, stepped here: Electron's own (setBounds' animate) drew it mirrored on Windows, in off the
 // window and out to the left (seen live 2026-11-23). Eased: fast at the start coming in, at the end going out.
+// The Teams page is not resized step by step: it does not draw that fast, and a page narrowed before it drew showed its old
+// picture cut off on the right, Teams' header buttons with it (seen live 2026-11-24). It changes its width once, under the panel.
+const sliding = new Map<WebContentsView, number>(); // a new slide of a page stops the one it had
 function slide(view: WebContentsView, from: number, to: number, ms: number, done?: () => void) {
-  const start = Date.now();
+  const start = Date.now(), id = Math.random();
+  sliding.set(view, id);
   const step = () => {
-    if (teamsWin.isDestroyed()) return;
+    if (teamsWin.isDestroyed() || sliding.get(view) !== id) return;
     const p = Math.min(1, (Date.now() - start) / ms), e = to < from ? 1 - (1 - p) ** 3 : p * p;
     view.setBounds({ ...view.getBounds(), x: Math.round(from + (to - from) * e) });
-    if (p < 1) setTimeout(step, 8); else done?.();
+    if (p < 1) return void setTimeout(step, 8);
+    sliding.delete(view);
+    done?.();
+    layout(); // and where a resize meanwhile wants them
   };
   step();
 }
@@ -609,7 +617,8 @@ const report = () => [
 // the summary (ui/summary.html). A tab's page lives until the panel closes, so a summary goes on while "Replies" is on
 // screen; closed, the panel's pages go: renderers less while it is not looked at.
 // A new page is white until it draws, so it gets its colours and comes on screen once loaded; the closed panel slides in
-// from the right (Teams narrows at once) and out the same way, a tab of the open one takes the place of the other at once.
+// from the right over Teams, which narrows once it is in, and out the same way, Teams widened under it first; a tab of the
+// open one takes the place of the other at once.
 const panelBg = () => (nativeTheme.shouldUseDarkColors ? '#1f1f1e' : '#f6f6f4'); // --bg of ui/drafts.html, ui/summary.html
 const motion = () => !systemPreferences.getAnimationSettings().prefersReducedMotion; // Windows' "Animation effects"
 const loaded = (page: Electron.WebContents) => new Promise<void>(done => {
@@ -631,12 +640,13 @@ export function openPanel(tab: Tab) {
   const view = page;
   void loaded(view.webContents).then(() => {
     if (panelTab !== tab || panelPages[tab] !== view || panelView === view) return; // closed or another tab meanwhile, or there
-    const comes = !panelView && motion();
+    const comes = !panelView && motion(), r = below(top());
     if (panelView) teamsWin.contentView.removeChildView(panelView);
+    if (comes) { arriving = view; view.setBounds({ ...r, x: r.width, width: PANEL }); } // just past the window's right edge
     teamsWin.contentView.addChildView(view, 1); // above Teams, under the settings
     panelView = view;
     layout();
-    if (comes) { const { x } = view.getBounds(); slide(view, x + PANEL, x, 180); } // from just past the window's right edge
+    if (comes) slide(view, r.width, r.width - PANEL, 180, () => { if (arriving === view) arriving = null; }); // then Teams narrows
     pushStrip();
   });
   return page.webContents;
@@ -650,7 +660,7 @@ function closePanel() {
     if (tab === 'summary' && !settings.summaryBackground) summaryRuns.get(page.id)?.abort(); // else it goes on and ends with a toast
     return page;
   });
-  panelTab = null; panelView = null; panelGoing = going;
+  panelTab = null; panelView = null; panelGoing = going; arriving = null;
   layout(); // Teams takes its width back under the panel, which slides off to the right
   pushStrip();
   const gone = () => {
@@ -660,8 +670,12 @@ function closePanel() {
     if (panelGoing === going) { panelGoing = null; caption(); } // Windows' buttons in Teams' colours once it is gone
   };
   if (!going || !motion()) return gone();
-  const { x } = going.getBounds();
-  slide(going, x, x + PANEL, 150, gone);
+  // off once Teams has drawn itself wider under it (~200 ms): sliding at once uncovered a blank band, then Teams jumped in
+  const drawn = teamsPage.executeJavaScript('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r))))').catch(() => {});
+  void Promise.race([drawn, new Promise(r => setTimeout(r, 400))]).then(() => {
+    const { x } = going.getBounds();
+    slide(going, x, x + PANEL, 150, gone);
+  });
 }
 export const toPanel = (event: string) => { for (const page of Object.values(panelPages)) page.webContents.send(event); };
 handle('panel:tab', (_e, tab: string) => { if (tab === 'drafts' || tab === 'summary') openPanel(tab); });
