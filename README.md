@@ -10,7 +10,7 @@ Replies and summaries can be written by the AI of the subscription you already p
 
 > Soroka is an independent project. It is not affiliated with, endorsed by or supported by Microsoft. It works with the Teams web app as it looks today, so a Teams update can break parts of it until Soroka is updated.
 
-<p align="center"><img src="docs/screenshots/main-en.png" width="820" alt="Soroka's window: the title bar with the Soroka menu open, Teams below it and the Replies panel on the right"></p>
+<p align="center"><img src="docs/screenshots/main-en.png" width="820" alt="Soroka's window: Teams' header as the title bar with Soroka's ▤ and ⚙, Soroka's buttons above the compose box and the Replies panel on the right"></p>
 
 Soroka's window is Teams, with Teams' own header as the window's title bar. Soroka adds ▤ and ⚙ to it: ▤ opens the Replies panel on the right, ⚙ the settings. In a chat, buttons above Teams' compose box suggest a reply, improve your text or summarize the chat; without AI only the summary is there. (Teams itself is left out of the picture.)
 
