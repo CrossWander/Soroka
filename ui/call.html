@@ -24,13 +24,13 @@
   .live .avatar { animation: halo 1.6s ease-out infinite; } /* ringing: a soft pulse, like Teams' own */
   @keyframes halo { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
   @media (prefers-reduced-motion: reduce) { .live .avatar { animation: none; } }
-  .kind { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind { color: var(--muted); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; } /* who started it: two lines */
   .kind.error { color: var(--no); }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .buttons { display: flex; gap: 8px; }
+  /* Teams' labels are whole, however long: what does not fit in one row goes to the next (Join, Decline, Message did not fit) */
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
   .buttons button { font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; color: #fff;
-    display: flex; gap: 6px; align-items: center; justify-content: center; flex: 1; min-width: 0; }
-  .buttons button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    display: flex; gap: 6px; align-items: center; justify-content: center; flex: 1 0 auto; white-space: nowrap; }
   .buttons .video, .buttons .other { flex: none; background: var(--btn); color: var(--fg); }
   .buttons .video:hover, .buttons .other:hover { background: var(--btn-hover); }
   .buttons .yes { background: var(--yes); } .buttons .no { background: var(--no); }
@@ -81,12 +81,12 @@
     const kind = t(call ? 'call.incoming' : r.live ? 'call.meeting' : 'call.meetingGone');
     $('kind').textContent = $('kind').title = r.message ? `${kind} · ${r.message}` : kind;
     $('title').textContent = $('title').title = r.title || t(call ? 'call.incoming' : 'call.meeting');
-    // video first (an icon), then the first other accept/join (green), the rest as they are, decline last (red);
-    // once Teams' own meeting toast is gone only "Join" is left
+    // video first (an icon), then the first other accept/join (green), decline (red), Teams' other buttons last: they are what
+    // goes to a second row when one does not hold them; once Teams' own meeting toast is gone only "Join" is left
     const buttons = r.buttons.map((b, i) => ({ ...b, i })).filter(b => r.live || !b.reject);
     const video = buttons.filter(b => !b.reject && VIDEO.test(b.label));
     const rest = buttons.filter(b => !b.reject && !video.includes(b));
-    const ordered = [...video, ...rest, ...buttons.filter(b => b.reject)];
+    const ordered = [...video, ...rest.slice(0, 1), ...buttons.filter(b => b.reject), ...rest.slice(1)];
     $('buttons').replaceChildren(...ordered.map(b => {
       const e = document.createElement('button');
       e.title = b.label || '';
