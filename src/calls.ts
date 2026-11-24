@@ -77,10 +77,14 @@ function popOutCall(what: string) {
   const view = teamsView;
   closeSettings();
   teamsWin.contentView.removeChildView(view);
-  // where the user left it, if that is still on a screen; the first time a small one in the middle, as Teams' own
+  // where the user left it, if that is still on a screen; the first time in the middle, as Teams' own. Never smaller than
+  // Teams' join screen needs without scrolling (the camera, the microphone and camera settings, Join): 820 × 560 was not (2026-11-24)
   const was = state.callBounds, wa = was && screen.getDisplayMatching(was).workArea;
   const seen = wa && was.x < wa.x + wa.width && was.x + was.width > wa.x && was.y < wa.y + wa.height && was.y + was.height > wa.y;
-  const win = callWin = new BaseWindow({ ...(seen ? was : { width: 820, height: 560 }), show: false, title: t('call.window'), icon: APP_ICON });
+  const area = seen ? wa : screen.getPrimaryDisplay().workArea;
+  const width = Math.min(Math.max(seen ? was.width : 1200, 1000), area.width), height = Math.min(Math.max(seen ? was.height : 820, 760), area.height);
+  const at = seen ? { x: Math.max(area.x, Math.min(was.x, area.x + area.width - width)), y: Math.max(area.y, Math.min(was.y, area.y + area.height - height)) } : {};
+  const win = callWin = new BaseWindow({ ...at, width, height, show: false, title: t('call.window'), icon: APP_ICON });
   win.removeMenu();
   win.contentView.addChildView(view);
   const fit = () => { const [width, height] = win.getContentSize(); view.setBounds({ x: 0, y: 0, width, height }); };
