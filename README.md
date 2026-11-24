@@ -12,7 +12,7 @@ Replies and summaries can be written by the AI of the subscription you already p
 
 <p align="center"><img src="docs/screenshots/main-en.png" width="820" alt="Soroka's window: the title bar with the Soroka menu open, Teams below it and the Replies panel on the right"></p>
 
-Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the actions for the chat you have open: suggest a reply, improve your text, a summary, reload Teams. ▤ opens the Replies panel on the right, and ⚙ opens the settings. (Teams itself is left out of the picture.)
+Soroka's window is Teams, with Teams' own header as the window's title bar. Soroka adds ▤ and ⚙ to it: ▤ opens the Replies panel on the right, ⚙ the settings. In a chat, buttons above Teams' compose box suggest a reply, improve your text or summarize the chat; without AI only the summary is there. (Teams itself is left out of the picture.)
 
 <p align="center">
   <img src="docs/screenshots/card-en.png" width="392" alt="A message card with an AI reply in the field, quick phrases and reactions">
@@ -30,8 +30,8 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 **Replying from a card**
 - Reply right in the card. Quick phrases and Teams' quick reactions 👍 ❤️ 😆 are on the card; the full Teams reaction set is in its ⋯ menu.
 - ✨ asks the AI for reply variants, and pressing it again shows the next one. Type what the reply should say ("decline politely, I'll do it tomorrow") before ✨ and every variant follows it.
-- The «Replies» panel next to Teams keeps every card in one place. Cards can be snoozed (30 min, 1 h, 3 h, tomorrow) or sent with a quote.
-- «Improve my text» rewrites what you typed in Teams: fixed, shorter, politer or translated.
+- The «Replies» panel next to Teams keeps every card in one place. Cards can be snoozed (30 min, 1 h, 3 h, tomorrow) or sent with a quote. The red number on ▤ counts what waits for your click (an AI session's draft, a reminder, a failed send); a purple dot marks a result you asked for and have not looked at yet.
+- «Improve my text» above the compose box rewrites what you typed in Teams: fixed, shorter, politer or translated.
 - Messages the AI wrote can carry a 🤖 mark. Your own words never get one.
 
 **Summaries**
@@ -41,7 +41,7 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 <p align="center"><img src="docs/screenshots/summary-en.png" width="360" alt="A chat summary in the panel"></p>
 
 **Calls**
-- An incoming call or a started meeting shows a card at the top right with Teams' own buttons.
+- An incoming call or a started meeting shows a card at the bottom right, above the other cards, with Teams' own buttons.
 - A call opens in its own window, as in the Teams app. Screen sharing has a picker of screens and windows.
 - Minimize the call window and a small one stays on top, as Teams' compact view: microphone, camera, hand, people and leave, who is speaking and how many are in. Like Teams, both windows stay out of screenshots.
 
@@ -51,8 +51,9 @@ Soroka's window is Teams with a title bar of its own. «Soroka ▾» holds the a
 
 **Comfort**
 - Interface in Ukrainian, English and Russian. When you pick Soroka's language or theme, Teams switches to it too, once; a later change in Teams itself stays.
-- Hotkeys in the Teams window: Ctrl+Shift+R suggest a reply, Ctrl+Shift+S summary, Ctrl+Shift+I improve my text, F5 reload Teams.
+- Hotkeys in the Teams window: Ctrl+Shift+R suggest a reply, Ctrl+Shift+S summary, Ctrl+Shift+I improve my text, F5 reload Teams (also in the tray menu).
 - When hidden, Soroka gives its memory back to Windows (about 250 MB instead of 1.5 GB).
+- During a call the main window's chats load only when needed (you open the window, send from a card, or the call ends): one copy of Teams instead of two, about 0.9 GB instead of 2 GB.
 - A new version comes as a card: «Install» downloads it from the Releases page, checks the author's signature and Soroka restarts as the new one.
 
 ## AI: your own plan, no API keys
@@ -83,7 +84,7 @@ Without any AI, Soroka still notifies, lets you reply by hand and makes the extr
 - **Where your chats go.** The text of a chat goes only to the AI whose model you chose, under your plan's terms. Ollama keeps it on your computer. Free plans may train on what they get, so use a work plan for work chats.
 - **«Not to AI».** Chats and people on this list never reach the AI. Their messages are also cut out of other chats' transcripts.
 - **No tools for background AI.** What Soroka asks the AI on its own (reply variants made ahead for new messages, AI sorting, the daily digest) goes only to an AI without tools: Claude, Codex with its tools switched off, or Ollama when you picked it. A message in a chat cannot make the AI run commands, read files or open sites. Gemini, Antigravity, Copilot and Cursor have tools of their own: they answer only on your click, and see chats only after you allow it once.
-- **Your data stays local.** Your Teams session, settings and the local API token live in `%APPDATA%\Soroka`. Soroka has no server of its own and sends no telemetry. Once a day it asks GitHub whether a newer version is out; that request carries nothing about you.
+- **Your data stays local.** Your Teams session, settings and the local API token live in `%APPDATA%\Soroka`. Soroka has no server of its own and sends no telemetry; Microsoft's telemetry from the Teams page is blocked and its in-app surveys are not loaded. Once a day it asks GitHub whether a newer version is out; that request carries nothing about you.
 - **The local API is local only.** It listens on `127.0.0.1` and needs the token. It turns away requests from browser pages.
 
 ## Requirements
