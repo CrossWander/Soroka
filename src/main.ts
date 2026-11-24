@@ -272,6 +272,14 @@ function createTeamsWindow() {
   // checks too, which Electron allows by default: the web pages of chat links open in this session and get none
   ses.setPermissionCheckHandler((_wc, _permission, origin) => TEAMS_PAGE.test(`${origin}/`));
   ses.setDisplayMediaRequestHandler(pickShare);
+  // Microsoft's telemetry is not sent and its in-app surveys (floodgate) are not loaded: nothing Soroka or the user needs from
+  // them, 1.2 MB of script less, no reports of what is done in this window (seen 2026-11-24). Teams' telemetry worker still
+  // runs: Teams' service worker gives it from its own cache, which no filter here sees.
+  ses.webRequest.onBeforeRequest({ urls: [
+    '*://*.events.data.microsoft.com/*', // the telemetry (OneCollector), from the page and from that worker
+    'https://res.cdn.office.net/admincenter/admin-main/floodgate/*', // the surveys
+    'https://admin.microsoft.com/api/instrument/*', // the surveys' own reports
+  ] }, (_d, done) => done({ cancel: true }));
   // Microsoft's sign-in keeps the user signed in with session cookies: a browser restores them after a restart, Electron
   // dropped them, and once Teams' day-long token ran out the user signed in again. Kept for 90 days in the session's own
   // encrypted store, as the browser keeps them (renewed on every sign-in); Microsoft's own persistent one lasts as long.
